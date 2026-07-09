@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#f6a623">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Little Plate">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<title>Little Plate — Toddler Food Tracker</title>
+<style>
+  :root {
+    --bg: #fdf8f2;
+    --card: #ffffff;
+    --ink: #2c2621;
+    --ink-soft: #7a6f63;
+    --line: #ece3d7;
+    --accent: #f6a623;
+    --accent-ink: #7a4b00;
+    --accent-soft: #fff4e0;
+    --green: #4a9d5b;
+    --green-soft: #e8f5ea;
+    --red: #d15c4d;
+    --shadow: 0 2px 10px rgba(120,90,40,.08);
+    --radius: 16px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1b1815;
+      --card: #262019;
+      --ink: #f2ece2;
+      --ink-soft: #a89a88;
+      --line: #3a3128;
+      --accent: #f6a623;
+      --accent-ink: #ffe6bb;
+      --accent-soft: #3a2c16;
+      --green: #6cc37c;
+      --green-soft: #23301f;
+      --red: #e57a6c;
+      --shadow: 0 2px 12px rgba(0,0,0,.3);
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.45;
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
+    -webkit-font-smoothing: antialiased;
+  }
+  header.app {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--bg);
+    padding: calc(env(safe-area-inset-top) + 14px) 18px 12px;
+    border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px;
+  }
+  header.app .logo { font-size: 26px; }
+  header.app h1 { font-size: 19px; margin: 0; font-weight: 700; letter-spacing: -.2px; }
+  header.app .sub { font-size: 12px; color: var(--ink-soft); margin-top: 1px; }
+  main { padding: 16px; max-width: 640px; margin: 0 auto; }
+  .hidden { display: none !important; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 12px; font-weight: 700; }
+  label.fld { display: block; font-size: 12px; font-weight: 600; color: var(--ink-soft); margin: 0 0 6px; text-transform: uppercase; letter-spacing: .4px; }
+
+  /* Photo rows (multiple before/after) */
+  .photo-row { display: flex; gap: 10px; overflow-x: auto; padding: 2px 2px 6px; -webkit-overflow-scrolling: touch; }
+  .photo-item { position: relative; flex: 0 0 auto; width: 92px; height: 92px; border-radius: 12px; overflow: hidden; border: 2px solid var(--accent); }
+  .photo-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .photo-item .rm { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; border: none; background: rgba(0,0,0,.6); color: #fff; font-size: 13px; line-height: 22px; padding: 0; }
+  .photo-add { flex: 0 0 auto; width: 92px; height: 92px; border-radius: 12px; border: 2px dashed var(--line); background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--ink-soft); cursor: pointer; }
+  .photo-add .icon { font-size: 26px; line-height: 1; }
+  .photo-add .t { font-size: 11px; font-weight: 600; margin-top: 3px; }
+  .photo-row.big .photo-item { width: 128px; height: 128px; }
+
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+
+  select, input[type=text], input[type=datetime-local], input[type=password], textarea {
+    width: 100%; font-size: 16px; font-family: inherit; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+    padding: 11px 12px; -webkit-appearance: none; appearance: none;
+  }
+  textarea { resize: vertical; min-height: 60px; }
+  select { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%237a6f63' stroke-width='1.6'/></svg>"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 34px; }
+
+  .meal-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip {
+    padding: 8px 14px; border-radius: 20px; border: 1px solid var(--line);
+    background: var(--bg); font-size: 14px; font-weight: 600; color: var(--ink-soft);
+  }
+  .chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
+
+  button.btn {
+    width: 100%; font-size: 16px; font-weight: 700; font-family: inherit;
+    border: none; border-radius: 12px; padding: 15px; cursor: pointer;
+    background: var(--accent); color: #3d2600;
+  }
+  button.btn.secondary { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+  button.btn.ghost { background: transparent; color: var(--red); font-weight: 600; }
+  button.btn:disabled { opacity: .5; }
+  button.btn.small { width: auto; padding: 9px 14px; font-size: 14px; }
+
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(0,0,0,.25); border-top-color: #3d2600; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -3px; margin-right: 8px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Analysis results */
+  .food {
+    border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; background: var(--bg);
+  }
+  .food .top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .food .name { flex: 1; font-weight: 700; font-size: 15px; }
+  .food .name input { font-weight: 700; }
+  .food .brand { font-size: 13px; padding: 9px 11px; margin: 8px 0 2px; }
+  .food .del { background: none; border: none; color: var(--red); font-size: 18px; padding: 2px 6px; }
+  .eaten-row { display: flex; align-items: center; gap: 10px; }
+  .eaten-row input[type=range] { flex: 1; accent-color: var(--accent); }
+  .pct { min-width: 66px; text-align: right; font-weight: 700; font-size: 14px; color: var(--accent-ink); }
+  .food .amt { font-size: 13px; color: var(--ink-soft); margin-top: 6px; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 20px; }
+  .badge.ate { background: var(--green-soft); color: var(--green); }
+  .badge.some { background: var(--accent-soft); color: var(--accent-ink); }
+  .badge.none { background: #f5e3e0; color: var(--red); }
+  @media (prefers-color-scheme: dark){ .badge.none { background:#3a201c; } }
+
+  /* Nutrition macros */
+  .est { font-size: 11px; font-weight: 700; color: var(--ink-soft); background: var(--bg); border: 1px solid var(--line); padding: 2px 9px; border-radius: 20px; margin-left: 6px; vertical-align: 2px; text-transform: none; letter-spacing: 0; }
+  .macro-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .macro { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 10px 6px; text-align: center; }
+  .macro.kcal { background: var(--accent-soft); border-color: var(--accent); }
+  .macro .mval { font-size: 19px; font-weight: 800; line-height: 1.1; }
+  .macro .munit { font-size: 11px; color: var(--ink-soft); font-weight: 600; }
+  .macro .mlabel { font-size: 10.5px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .3px; margin-top: 3px; }
+  .macro input { width: 100%; text-align: center; font-size: 19px; font-weight: 800; padding: 2px 0; border: none; background: transparent; color: var(--ink); }
+  .macro input::-webkit-outer-spin-button, .macro input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .day-macros { font-size: 12px; font-weight: 600; color: var(--ink-soft); text-transform: none; letter-spacing: 0; margin-top: 3px; }
+  .day-macros b { color: var(--accent-ink); font-weight: 700; }
+  @media (prefers-color-scheme: dark){ .day-macros b { color: var(--accent); } }
+
+  /* History */
+  .day-head { font-size: 13px; font-weight: 700; color: var(--ink-soft); margin: 18px 4px 8px; text-transform: uppercase; letter-spacing: .5px; }
+  .entry { display: flex; gap: 12px; align-items: center; }
+  .entry .thumbs { display: flex; }
+  .entry .thumbs img { width: 46px; height: 46px; border-radius: 9px; object-fit: cover; border: 2px solid var(--card); }
+  .entry .thumbs img:nth-child(2) { margin-left: -14px; }
+  .entry .meta { flex: 1; min-width: 0; }
+  .entry .meta .m1 { font-weight: 700; font-size: 15px; }
+  .entry .meta .m2 { font-size: 13px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .entry .time { font-size: 12px; color: var(--ink-soft); }
+
+  .empty { text-align: center; color: var(--ink-soft); padding: 50px 20px; }
+  .empty .big { font-size: 44px; margin-bottom: 10px; }
+
+  /* Trends */
+  .hero { text-align: center; padding: 4px 0 2px; }
+  .hero .cal { font-size: 46px; font-weight: 800; line-height: 1; }
+  .hero .cal .u { font-size: 16px; color: var(--ink-soft); font-weight: 700; }
+  .hero .subm { font-size: 13px; color: var(--ink-soft); margin-top: 3px; }
+  .hero .macro-grid { margin-top: 14px; }
+  .range-toggle { display: flex; gap: 8px; margin-bottom: 12px; }
+  .range-toggle .chip { flex: 1; text-align: center; }
+  .chart { display: flex; align-items: flex-end; gap: 5px; height: 128px; }
+  .chart .col { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; min-width: 0; }
+  .chart .cval { font-size: 9px; color: var(--ink-soft); margin-bottom: 2px; white-space: nowrap; }
+  .chart .bar { width: 72%; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 2px; }
+  .chart .clab { font-size: 10px; color: var(--ink-soft); margin-top: 5px; min-height: 12px; }
+  .food-stat { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .food-stat:last-child { border-bottom: none; }
+  .food-stat .fname { flex: 1; font-weight: 600; font-size: 14px; min-width: 0; }
+  .food-stat .fname .fmeta { font-size: 11.5px; color: var(--ink-soft); font-weight: 500; }
+  .food-stat .mini-track { width: 60px; height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; overflow: hidden; flex: 0 0 auto; }
+  .food-stat .mini-fill { height: 100%; }
+  .food-stat .fpct { font-weight: 800; font-size: 14px; min-width: 42px; text-align: right; }
+
+  /* Nav */
+  nav.tabs {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
+    background: var(--card); border-top: 1px solid var(--line);
+    display: flex; padding-bottom: env(safe-area-inset-bottom);
+  }
+  nav.tabs button {
+    flex: 1; background: none; border: none; padding: 10px 0 8px; cursor: pointer;
+    color: var(--ink-soft); font-size: 11px; font-weight: 600; font-family: inherit;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+  }
+  nav.tabs button .ic { font-size: 21px; }
+  nav.tabs button.on { color: var(--accent-ink); }
+  @media (prefers-color-scheme: dark){ nav.tabs button.on { color: var(--accent); } }
+
+  /* Modal / detail sheet */
+  .sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 40; display: flex; align-items: flex-end; }
+  .sheet {
+    background: var(--bg); width: 100%; max-width: 640px; margin: 0 auto;
+    border-radius: 20px 20px 0 0; max-height: 92vh; overflow-y: auto;
+    padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+  }
+  .sheet .grab { width: 40px; height: 4px; background: var(--line); border-radius: 2px; margin: 4px auto 14px; }
+  .sheet .big-photos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  .sheet .big-photos figure { margin: 0; }
+  .sheet .big-photos img { width: 100%; border-radius: 12px; aspect-ratio: 1; object-fit: cover; }
+  .sheet .big-photos figcaption { font-size: 11px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; margin-top: 4px; text-align: center; }
+
+  .toast {
+    position: fixed; bottom: calc(84px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
+    background: var(--ink); color: var(--bg); padding: 11px 18px; border-radius: 22px; font-size: 14px; font-weight: 600;
+    z-index: 50; box-shadow: 0 4px 16px rgba(0,0,0,.25); opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+  .note { font-size: 12.5px; color: var(--ink-soft); line-height: 1.5; }
+  a { color: var(--accent-ink); }
+  @media (prefers-color-scheme: dark){ a { color: var(--accent); } }
+</style>
+</head>
+<body>
+<header class="app">
+  <span class="logo">🍽️</span>
+  <div>
+    <h1>Little Plate</h1>
+    <div class="sub" id="header-sub">What did she eat today?</div>
+  </div>
+</header>
+
+<main>
+  <!-- ============ LOG TAB ============ -->
+  <section id="tab-log">
+    <div class="card">
+      <h2>📸 Before <span class="est">served</span></h2>
+      <div class="photo-row" id="row-before"></div>
+      <p class="note" style="margin-bottom:0">One photo per thing you serve — add more for seconds or later courses.</p>
+    </div>
+
+    <div class="card">
+      <h2>🍽️ After <span class="est">leftovers &amp; spills</span></h2>
+      <div class="photo-row" id="row-after"></div>
+      <p class="note" style="margin-bottom:0">The plate at the end, plus wherever food ended up — floor, tray, bib. Spilled or thrown food won't be counted as eaten.</p>
+    </div>
+
+    <input type="file" id="file-input" accept="image/*" multiple class="hidden">
+
+    <div class="card">
+      <label class="fld">Meal</label>
+      <div class="meal-chips" id="meal-chips">
+        <div class="chip" data-meal="Breakfast">🥣 Breakfast</div>
+        <div class="chip" data-meal="Lunch">🥪 Lunch</div>
+        <div class="chip" data-meal="Dinner">🍝 Dinner</div>
+        <div class="chip" data-meal="Snack">🍎 Snack</div>
+      </div>
+      <div style="height:14px"></div>
+      <label class="fld" for="when">When</label>
+      <input type="datetime-local" id="when">
+    </div>
+
+    <button class="btn" id="analyze-btn" disabled>✨ Analyze with AI</button>
+    <div style="height:12px"></div>
+
+    <!-- results injected here -->
+    <div id="results"></div>
+  </section>
+
+  <!-- ============ HISTORY TAB ============ -->
+  <section id="tab-history" class="hidden">
+    <div id="history-list"></div>
+  </section>
+
+  <!-- ============ TRENDS TAB ============ -->
+  <section id="tab-trends" class="hidden">
+    <div id="trends-body"></div>
+  </section>
+
+  <!-- ============ SETTINGS TAB ============ -->
+  <section id="tab-settings" class="hidden">
+    <div class="card">
+      <h2>🔑 Anthropic API Key</h2>
+      <p class="note" style="margin-top:0">Needed for AI photo analysis. Stored only on this device (in your browser), never sent anywhere except Anthropic. Get one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>.</p>
+      <input type="password" id="api-key" placeholder="sk-ant-..." autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div style="height:10px"></div>
+      <div class="row">
+        <button class="btn small secondary" id="save-key">Save key</button>
+        <button class="btn small secondary" id="test-key">Test</button>
+      </div>
+      <div id="key-status" class="note" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <h2>🧠 Model</h2>
+      <select id="model">
+        <option value="claude-opus-4-8">Claude Opus 4.8 — most accurate (default)</option>
+        <option value="claude-sonnet-5">Claude Sonnet 5 — faster &amp; cheaper</option>
+        <option value="claude-haiku-4-5">Claude Haiku 4.5 — cheapest</option>
+      </select>
+      <p class="note" style="margin-bottom:0">Opus is the most reliable at reading plates. Switch to Sonnet or Haiku to cut cost if you log many meals a day.</p>
+    </div>
+
+    <div class="card">
+      <h2>💾 Your Data</h2>
+      <p class="note" style="margin-top:0">Everything is stored on this device. Export a backup or clear it all.</p>
+      <div class="row">
+        <button class="btn small secondary" id="export-btn">Export JSON</button>
+        <button class="btn small ghost" id="clear-btn">Clear all data</button>
+      </div>
+      <div id="data-status" class="note" style="margin-top:10px"></div>
+    </div>
+
+    <p class="note" style="text-align:center">Little Plate · runs entirely on your phone</p>
+  </section>
+</main>
+
+<nav class="tabs">
+  <button data-tab="log" class="on"><span class="ic">📷</span>Log</button>
+  <button data-tab="history"><span class="ic">📅</span>History</button>
+  <button data-tab="trends"><span class="ic">📈</span>Trends</button>
+  <button data-tab="settings"><span class="ic">⚙️</span>Settings</button>
+</nav>
+
+<div id="toast" class="toast"></div>
+
+<script>
+/* ------------------------------------------------------------------ *
+ *  Little Plate — toddler food tracker (single-file PWA)
+ *  Storage: IndexedDB (photos as Blobs) + localStorage (settings)
+ *  AI: direct browser call to Anthropic Messages API
+ * ------------------------------------------------------------------ */
+
+const $ = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => [...r.querySelectorAll(s)];
+
+/* ---------- settings (localStorage) ---------- */
+const settings = {
+  get key()   { return localStorage.getItem('lp_key') || ''; },
+  set key(v)  { localStorage.setItem('lp_key', v); },
+  get model() { return localStorage.getItem('lp_model') || 'claude-opus-4-8'; },
+  set model(v){ localStorage.setItem('lp_model', v); },
+};
+
+/* ---------- IndexedDB ---------- */
+let _db;
+function db() {
+  if (_db) return Promise.resolve(_db);
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('little-plate', 1);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      if (!d.objectStoreNames.contains('entries'))
+        d.createObjectStore('entries', { keyPath: 'id' });
+    };
+    r.onsuccess = () => { _db = r.result; res(_db); };
+    r.onerror = () => rej(r.error);
+  });
+}
+async function dbPut(entry) {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const tx = d.transaction('entries', 'readwrite');
+    tx.objectStore('entries').put(entry);
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+}
+async function dbAll() {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const out = [];
+    const cur = d.transaction('entries').objectStore('entries').openCursor();
+    cur.onsuccess = e => { const c = e.target.result; if (c) { out.push(c.value); c.continue(); } else res(out); };
+    cur.onerror = () => rej(cur.error);
+  });
+}
+async function dbDelete(id) {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const tx = d.transaction('entries', 'readwrite');
+    tx.objectStore('entries').delete(id);
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+}
+async function dbClear() {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const tx = d.transaction('entries', 'readwrite');
+    tx.objectStore('entries').clear();
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+}
+
+/* ---------- image helpers ---------- */
+// Downscale to max edge, return { blob, dataUrl, base64 }
+function processImage(file, maxEdge = 1024, quality = 0.82) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let { width: w, height: h } = img;
+      if (Math.max(w, h) > maxEdge) {
+        const s = maxEdge / Math.max(w, h);
+        w = Math.round(w * s); h = Math.round(h * s);
+      }
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      c.toBlob(blob => {
+        const fr = new FileReader();
+        fr.onload = () => {
+          const dataUrl = fr.result;
+          res({ blob, dataUrl, base64: dataUrl.split(',')[1] });
+        };
+        fr.readAsDataURL(blob);
+      }, 'image/jpeg', quality);
+    };
+    img.onerror = rej;
+    img.src = url;
+  });
+}
+function blobToUrl(blob) { return URL.createObjectURL(blob); }
+
+/* ---------- transient "compose" state ---------- */
+let compose = { before: [], after: [], meal: 'Lunch', foods: null, nutrition: null, overall: '', analyzedModel: null };
+
+/* macro metadata (shared by editor, detail, daily totals) */
+const MACROS = [
+  { k: 'calories',  label: 'Calories', unit: 'kcal', cls: 'kcal' },
+  { k: 'protein_g', label: 'Protein',  unit: 'g' },
+  { k: 'carbs_g',   label: 'Carbs',    unit: 'g' },
+  { k: 'fat_g',     label: 'Fat',      unit: 'g' },
+  { k: 'sugar_g',   label: 'Sugar',    unit: 'g' },
+  { k: 'fiber_g',   label: 'Fiber',    unit: 'g' }
+];
+function macroGridHtml(n) {
+  n = n || {};
+  return '<div class="macro-grid">' + MACROS.map(m => `
+    <div class="macro ${m.cls || ''}">
+      <div class="mval">${Math.round(n[m.k] || 0)}<span class="munit"> ${m.unit}</span></div>
+      <div class="mlabel">${m.label}</div>
+    </div>`).join('') + '</div>';
+}
+// works with both new (string data-URL) and legacy (Blob) photo fields
+function imgSrc(v) { if (!v) return ''; if (typeof v === 'string') return v; try { return URL.createObjectURL(v); } catch (e) { return ''; } }
+// returns an array of photo URLs; supports new arrays and legacy single-photo fields
+function entryPhotos(e, which) {
+  const arr = e[which + 'Imgs'];
+  if (Array.isArray(arr)) return arr.filter(Boolean).map(imgSrc);
+  const single = e[which + 'Img'] || e[which + 'Blob'];
+  return single ? [imgSrc(single)] : [];
+}
+
+/* ---------- toast ---------- */
+let toastT;
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+/* ---------- tabs ---------- */
+function showTab(name) {
+  $$('section[id^=tab-]').forEach(s => s.classList.add('hidden'));
+  $('#tab-' + name).classList.remove('hidden');
+  $$('nav.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+  if (name === 'history') renderHistory();
+  if (name === 'trends') renderTrends();
+  if (name === 'settings') refreshSettings();
+  window.scrollTo(0, 0);
+}
+$$('nav.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+
+/* ---------- LOG: photo capture (multiple before/after) ---------- */
+let addingTo = 'before';
+function renderPhotoRow(which) {
+  const row = $('#row-' + which);
+  const items = compose[which].map((p, i) =>
+    `<div class="photo-item"><img src="${p.dataUrl}"><button class="rm" data-rm="${which}" data-i="${i}">✕</button></div>`).join('');
+  row.innerHTML = items + `<div class="photo-add" data-add="${which}"><span class="icon">＋</span><span class="t">Add</span></div>`;
+}
+// delegated (rows re-render): tap add-tile → open picker; tap ✕ → remove that photo
+document.addEventListener('click', e => {
+  const add = e.target.closest('.photo-add');
+  if (add) { addingTo = add.dataset.add; $('#file-input').click(); return; }
+  const rm = e.target.closest('.rm');
+  if (rm) { compose[rm.dataset.rm].splice(+rm.dataset.i, 1); renderPhotoRow(rm.dataset.rm); updateAnalyzeBtn(); }
+});
+$('#file-input').addEventListener('change', async e => {
+  const files = [...(e.target.files || [])];
+  e.target.value = '';
+  if (!files.length) return;
+  toast(files.length > 1 ? `Processing ${files.length} photos…` : 'Processing photo…');
+  try {
+    for (const f of files) compose[addingTo].push(await processImage(f));
+    renderPhotoRow(addingTo);
+    updateAnalyzeBtn();
+  } catch (err) { toast('Could not read a photo'); }
+});
+function updateAnalyzeBtn() {
+  $('#analyze-btn').disabled = !(compose.before.length && compose.after.length);
+}
+
+/* ---------- LOG: meal + time ---------- */
+$('#meal-chips').addEventListener('click', e => {
+  const c = e.target.closest('.chip'); if (!c) return;
+  compose.meal = c.dataset.meal;
+  $$('#meal-chips .chip').forEach(x => x.classList.toggle('on', x === c));
+});
+function nowLocalInput() {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
+
+/* ---------- LOG: analyze ---------- */
+const SCHEMA = {
+  type: 'object',
+  properties: {
+    foods: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          eaten_fraction: { type: 'number' },
+          amount_eaten: { type: 'string' }
+        },
+        required: ['name', 'eaten_fraction', 'amount_eaten'],
+        additionalProperties: false
+      }
+    },
+    nutrition: {
+      type: 'object',
+      properties: {
+        calories:  { type: 'number' },
+        protein_g: { type: 'number' },
+        carbs_g:   { type: 'number' },
+        fat_g:     { type: 'number' },
+        sugar_g:   { type: 'number' },
+        fiber_g:   { type: 'number' }
+      },
+      required: ['calories', 'protein_g', 'carbs_g', 'fat_g', 'sugar_g', 'fiber_g'],
+      additionalProperties: false
+    },
+    overall: { type: 'string' }
+  },
+  required: ['foods', 'nutrition', 'overall'],
+  additionalProperties: false
+};
+
+// used when recalculating nutrition from user-corrected foods/brands
+const NUTRI_SCHEMA = {
+  type: 'object',
+  properties: { nutrition: SCHEMA.properties.nutrition },
+  required: ['nutrition'],
+  additionalProperties: false
+};
+
+const INSTRUCTIONS =
+`You are helping a parent track what their toddler ate. You are given two SETS of photos of one meal:
+- BEFORE photos: everything that was served — possibly across multiple photos (seconds, or courses served at different times). Add them up as the TOTAL amount served.
+- AFTER photos: where the food ended up afterward — some may still be on the plate/bowl, and some may have been spilled or thrown elsewhere (floor, tray, highchair, bib). There may be several after photos.
+
+For EACH distinct food or drink item served:
+- name: a short, friendly name (e.g. "Scrambled eggs", "Blueberries", "Toast", "Milk").
+- eaten_fraction: the fraction of the TOTAL served amount that was actually EATEN (ingested), from 0 to 1. Food still on the plate was NOT eaten. Food that was spilled or thrown is NOT eaten either — do not count it as eaten.
+- amount_eaten: a short human phrase, e.g. "ate about half", "ate it all", "threw most on the floor", "a few bites then spilled the rest".
+
+Then estimate "nutrition" — the approximate nutrition of the portion the toddler ACTUALLY ATE (i.e. what disappeared between before and after, not what was served). Give realistic toddler-sized numbers:
+- calories (kcal), protein_g, carbs_g, fat_g, sugar_g, fiber_g — all in grams except calories.
+Base it on the identified foods and how much of each was eaten. If almost nothing was eaten, these should be near zero. These are rough estimates from photos, so approximate sensibly.
+
+Then write "overall": one short, warm sentence summarizing the meal. If a lot was spilled or thrown rather than eaten, mention that gently.
+
+Only list items that appear in the BEFORE photos. Be realistic; toddlers rarely finish everything.`;
+
+function buildAnalyzeContent() {
+  const img = p => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: p.base64 } });
+  const content = [{ type: 'text', text: `BEFORE photos — everything served (${compose.before.length}):` }];
+  compose.before.forEach(p => content.push(img(p)));
+  content.push({ type: 'text', text: `AFTER photos — leftovers on the plate and any spilled/thrown food (${compose.after.length}):` });
+  compose.after.forEach(p => content.push(img(p)));
+  content.push({ type: 'text', text: INSTRUCTIONS });
+  return content;
+}
+
+async function analyze() {
+  if (!settings.key) { toast('Add your API key in Settings first'); showTab('settings'); return; }
+  const btn = $('#analyze-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Looking at the plates…';
+  try {
+    const body = {
+      model: settings.model,
+      max_tokens: 1500,
+      messages: [{ role: 'user', content: buildAnalyzeContent() }],
+      output_config: { format: { type: 'json_schema', schema: SCHEMA } }
+    };
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': settings.key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || ('HTTP ' + res.status));
+    }
+    const data = await res.json();
+    if (data.stop_reason === 'refusal') throw new Error('The model declined to analyze these images.');
+    const textBlock = (data.content || []).find(b => b.type === 'text');
+    const parsed = JSON.parse(textBlock.text);
+    compose.foods = parsed.foods || [];
+    compose.nutrition = parsed.nutrition || null;
+    compose.overall = parsed.overall || '';
+    compose.analyzedModel = settings.model;
+    renderResults();
+    toast('Done! Review & save 👇');
+  } catch (err) {
+    toast('Analysis failed: ' + err.message);
+  } finally {
+    btn.innerHTML = '✨ Analyze with AI';
+    updateAnalyzeBtn();
+  }
+}
+$('#analyze-btn').addEventListener('click', analyze);
+
+// Recompute nutrition using the user-corrected food names + brands (exact identities).
+async function recalcNutrition() {
+  if (!settings.key) { toast('Add your API key in Settings first'); showTab('settings'); return; }
+  if (!compose.foods || !compose.foods.length) { toast('Add or correct foods first'); return; }
+  const btn = $('#recalc-nutri');
+  const orig = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Recalculating…';
+  try {
+    const lines = compose.foods.filter(f => f.name.trim()).map(f => {
+      const label = [f.brand, f.name].filter(s => (s || '').trim()).join(' — ');
+      return `- ${label}: ate ${Math.round((f.eaten_fraction ?? 0) * 100)}% of the amount served`;
+    }).join('\n');
+    const content = [];
+    compose.before.forEach(p => content.push({ type: 'text', text: 'Served photo:' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: p.base64 } }));
+    compose.after.forEach(p => content.push({ type: 'text', text: 'After photo:' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: p.base64 } }));
+    content.push({ type: 'text', text:
+`These are the EXACT foods for this toddler meal — the parent has confirmed each identity (and brand/product where given). Trust these identities over what the photos might look like:
+${lines}
+
+Use these exact foods/brands, and the photos to judge how much was SERVED. Then compute "nutrition" — the totals for the portion ACTUALLY EATEN across all items (served amount × the eaten % above): calories (kcal), protein_g, carbs_g, fat_g, sugar_g, fiber_g. Use the real published nutrition facts for any named brand or product you recognize. Keep it toddler-sized and realistic.` });
+    const body = { model: settings.model, max_tokens: 800, messages: [{ role: 'user', content }], output_config: { format: { type: 'json_schema', schema: NUTRI_SCHEMA } } };
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': settings.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e?.error?.message || ('HTTP ' + res.status)); }
+    const data = await res.json();
+    const parsed = JSON.parse(data.content.find(b => b.type === 'text').text);
+    compose.nutrition = parsed.nutrition;
+    MACROS.forEach(m => { const inp = document.querySelector(`#macro-inputs input[data-k="${m.k}"]`); if (inp) inp.value = Math.round((compose.nutrition && compose.nutrition[m.k]) || 0); });
+    toast('Nutrition updated from your corrections ✨');
+  } catch (err) {
+    toast('Recalc failed: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.innerHTML = orig;
+  }
+}
+
+/* ---------- LOG: render editable results ---------- */
+function eatenBadge(f) {
+  if (f >= 0.85) return '<span class="badge ate">Ate it 🎉</span>';
+  if (f <= 0.15) return '<span class="badge none">Left it</span>';
+  return '<span class="badge some">Some</span>';
+}
+function renderResults() {
+  if (!compose.foods) { $('#results').innerHTML = ''; return; }
+  const el = $('#results');
+  el.innerHTML = `
+    <div class="card">
+      <h2>🍴 What she ate <button class="btn small secondary" id="add-food" style="float:right;margin-top:-4px">＋ Add</button></h2>
+      <div id="food-list"></div>
+      <label class="fld" style="margin-top:6px">Overall note</label>
+      <textarea id="overall-note" placeholder="Add your own notes…">${escapeHtml(compose.overall)}</textarea>
+    </div>
+    <div class="card">
+      <h2>📊 Nutrition eaten <span class="est">estimated</span></h2>
+      <div class="macro-grid" id="macro-inputs">
+        ${MACROS.map(m => `
+          <div class="macro ${m.cls || ''}">
+            <input type="number" inputmode="decimal" step="any" min="0" data-k="${m.k}" value="${Math.round((compose.nutrition && compose.nutrition[m.k]) || 0)}">
+            <div class="mlabel">${m.label} <span class="munit">${m.unit}</span></div>
+          </div>`).join('')}
+      </div>
+      <p class="note" style="margin:0 0 10px">Estimated from the photos — correct any food name or brand above, then recalculate. You can also tap any number to edit it directly.</p>
+      <button class="btn small secondary" id="recalc-nutri" style="width:100%">↻ Recalculate from foods &amp; brands</button>
+    </div>
+    <button class="btn" id="save-entry">💾 Save this meal</button>
+    <div style="height:8px"></div>
+    <button class="btn secondary" id="discard-entry">Discard</button>
+    <div style="height:20px"></div>`;
+  paintFoodList();
+  $('#overall-note').addEventListener('input', e => compose.overall = e.target.value);
+  $('#add-food').addEventListener('click', () => {
+    compose.foods.push({ name: '', eaten_fraction: 0.5, amount_eaten: 'ate some' });
+    paintFoodList();
+  });
+  $$('#macro-inputs input').forEach(inp => inp.addEventListener('input', () => {
+    if (!compose.nutrition) compose.nutrition = {};
+    compose.nutrition[inp.dataset.k] = parseFloat(inp.value) || 0;
+  }));
+  $('#recalc-nutri').addEventListener('click', recalcNutrition);
+  $('#save-entry').addEventListener('click', saveEntry);
+  $('#discard-entry').addEventListener('click', resetCompose);
+}
+function paintFoodList() {
+  const list = $('#food-list');
+  list.innerHTML = '';
+  compose.foods.forEach((f, i) => {
+    const pct = Math.round((f.eaten_fraction ?? 0) * 100);
+    const row = document.createElement('div');
+    row.className = 'food';
+    row.innerHTML = `
+      <div class="top">
+        <input class="name" type="text" value="${escapeHtml(f.name)}" placeholder="Food name">
+        <button class="del" title="Remove">🗑️</button>
+      </div>
+      <input class="brand" type="text" value="${escapeHtml(f.brand || '')}" placeholder="Brand / exact product (optional)">
+      <div class="eaten-row">
+        <input type="range" min="0" max="100" step="5" value="${pct}">
+        <span class="pct">${pct}% ${eatenBadge(f.eaten_fraction ?? 0)}</span>
+      </div>`;
+    const nameI = row.querySelector('.name');
+    const brandI = row.querySelector('.brand');
+    const range = row.querySelector('input[type=range]');
+    const pctEl = row.querySelector('.pct');
+    nameI.addEventListener('input', () => compose.foods[i].name = nameI.value);
+    brandI.addEventListener('input', () => compose.foods[i].brand = brandI.value);
+    range.addEventListener('input', () => {
+      const v = +range.value;
+      compose.foods[i].eaten_fraction = v / 100;
+      compose.foods[i].amount_eaten = fractionPhrase(v / 100);
+      pctEl.innerHTML = v + '% ' + eatenBadge(v / 100);
+    });
+    row.querySelector('.del').addEventListener('click', () => {
+      compose.foods.splice(i, 1); paintFoodList();
+    });
+    list.appendChild(row);
+  });
+}
+function fractionPhrase(f) {
+  if (f >= 0.95) return 'ate it all';
+  if (f >= 0.7)  return 'ate most of it';
+  if (f >= 0.4)  return 'ate about half';
+  if (f >= 0.15) return 'ate a few bites';
+  return 'barely touched';
+}
+
+/* ---------- LOG: save ---------- */
+async function saveEntry() {
+  const entry = {
+    id: Date.now(),
+    when: $('#when').value || nowLocalInput(),
+    meal: compose.meal,
+    foods: compose.foods.filter(f => f.name.trim()),
+    nutrition: compose.nutrition || null,
+    overall: compose.overall,
+    model: compose.analyzedModel,
+    // Stored as data-URL strings (not Blobs) — reliable in IndexedDB on iOS Safari.
+    beforeImgs: compose.before.map(p => p.dataUrl),
+    afterImgs: compose.after.map(p => p.dataUrl)
+  };
+  try {
+    await dbPut(entry);
+    resetCompose();
+    toast('Saved 🎉');
+    showTab('history');
+  } catch (err) { toast('Could not save: ' + err.message); }
+}
+function resetCompose() {
+  compose = { before: [], after: [], meal: compose.meal, foods: null, nutrition: null, overall: '', analyzedModel: null };
+  renderPhotoRow('before'); renderPhotoRow('after');
+  $('#results').innerHTML = '';
+  $('#when').value = nowLocalInput();
+  updateAnalyzeBtn();
+}
+
+/* ---------- HISTORY ---------- */
+function dayKey(whenStr) { return (whenStr || '').slice(0, 10); }
+function prettyDay(key) {
+  if (!key) return '';
+  const d = new Date(key + 'T00:00');
+  const today = new Date(); today.setHours(0,0,0,0);
+  const diff = Math.round((today - d) / 86400000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+function prettyTime(whenStr) {
+  const d = new Date(whenStr);
+  if (isNaN(d)) return '';
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+async function renderHistory() {
+  const list = $('#history-list');
+  const entries = (await dbAll()).sort((a, b) => (b.when || '').localeCompare(a.when || '') || b.id - a.id);
+  if (!entries.length) {
+    list.innerHTML = `<div class="empty"><div class="big">🍽️</div><div>No meals logged yet.<br>Tap <b>Log</b> to add the first one!</div></div>`;
+    return;
+  }
+  // group by day (entries already sorted newest-first)
+  const days = [];
+  const byDay = {};
+  for (const e of entries) {
+    const dk = dayKey(e.when);
+    if (!byDay[dk]) { byDay[dk] = []; days.push(dk); }
+    byDay[dk].push(e);
+  }
+  let html = '';
+  for (const dk of days) {
+    const dayEntries = byDay[dk];
+    const t = { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 };
+    for (const e of dayEntries) if (e.nutrition) for (const k in t) t[k] += (+e.nutrition[k] || 0);
+    const macros = t.calories ? `<div class="day-macros"><b>${Math.round(t.calories)}</b> kcal · <b>${Math.round(t.protein_g)}g</b> protein · <b>${Math.round(t.carbs_g)}g</b> carbs · <b>${Math.round(t.fat_g)}g</b> fat</div>` : '';
+    html += `<div class="day-head">${prettyDay(dk)}${macros}</div>`;
+    for (const e of dayEntries) {
+      const foodsTxt = e.foods && e.foods.length
+        ? e.foods.map(f => f.name).slice(0, 4).join(', ') + (e.foods.length > 4 ? '…' : '')
+        : 'No items';
+      const bSrc = entryPhotos(e, 'before')[0] || '', aSrc = entryPhotos(e, 'after')[0] || '';
+      const kcal = e.nutrition && e.nutrition.calories ? `<div class="time">${Math.round(e.nutrition.calories)} kcal</div>` : '';
+      html += `<div class="card entry" data-id="${e.id}">
+        <div class="thumbs">${bSrc ? `<img src="${bSrc}">` : ''}${aSrc ? `<img src="${aSrc}">` : ''}</div>
+        <div class="meta">
+          <div class="m1">${mealEmoji(e.meal)} ${escapeHtml(e.meal || 'Meal')}</div>
+          <div class="m2">${escapeHtml(foodsTxt)}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="time">${prettyTime(e.when)}</div>
+          ${kcal}
+        </div>
+      </div>`;
+    }
+  }
+  list.innerHTML = html;
+  $$('.entry', list).forEach(el => el.addEventListener('click', () => openDetail(+el.dataset.id)));
+}
+function mealEmoji(m) { return ({ Breakfast:'🥣', Lunch:'🥪', Dinner:'🍝', Snack:'🍎' })[m] || '🍽️'; }
+
+/* ---------- DETAIL sheet ---------- */
+async function openDetail(id) {
+  const entry = (await dbAll()).find(e => e.id === id);
+  if (!entry) return;
+  const bg = document.createElement('div');
+  bg.className = 'sheet-bg';
+  const beforeUrls = entryPhotos(entry, 'before');
+  const afterUrls  = entryPhotos(entry, 'after');
+  const photoRow = urls => urls.length
+    ? `<div class="photo-row big">${urls.map(u => `<div class="photo-item" style="border-color:var(--line)"><img src="${u}"></div>`).join('')}</div>`
+    : '<p class="note" style="margin-top:0">No photo</p>';
+  const nutriHtml = entry.nutrition
+    ? `<div style="margin-bottom:14px"><div class="fld" style="margin-bottom:8px">📊 Nutrition eaten <span class="est">estimated</span></div>${macroGridHtml(entry.nutrition)}</div>`
+    : '';
+  const foodsHtml = (entry.foods || []).map(f => `
+    <div class="food">
+      <div class="top"><span class="name">${escapeHtml(f.name)}</span>${eatenBadge(f.eaten_fraction ?? 0)}</div>
+      ${f.brand ? `<div class="amt" style="margin-top:2px">🏷️ ${escapeHtml(f.brand)}</div>` : ''}
+      <div class="amt">${escapeHtml(f.amount_eaten || '')} · ${Math.round((f.eaten_fraction ?? 0)*100)}%</div>
+    </div>`).join('') || '<p class="note">No items recorded.</p>';
+  bg.innerHTML = `
+    <div class="sheet">
+      <div class="grab"></div>
+      <h2 style="margin:0 0 4px">${mealEmoji(entry.meal)} ${escapeHtml(entry.meal || 'Meal')}</h2>
+      <div class="note" style="margin-bottom:14px">${prettyDay(dayKey(entry.when))} · ${prettyTime(entry.when)}</div>
+      <div class="fld" style="margin-bottom:6px">📸 Before · served (${beforeUrls.length})</div>
+      ${photoRow(beforeUrls)}
+      <div class="fld" style="margin:12px 0 6px">🍽️ After · leftovers &amp; spills (${afterUrls.length})</div>
+      ${photoRow(afterUrls)}
+      <div style="height:14px"></div>
+      ${entry.overall ? `<div class="card" style="margin-bottom:14px"><b>Summary.</b> ${escapeHtml(entry.overall)}</div>` : ''}
+      ${nutriHtml}
+      <div class="fld" style="margin-bottom:8px">🍴 Foods</div>
+      ${foodsHtml}
+      <div style="height:10px"></div>
+      <button class="btn ghost" id="detail-delete">🗑️ Delete this meal</button>
+      <div style="height:6px"></div>
+      <button class="btn secondary" id="detail-close">Close</button>
+    </div>`;
+  document.body.appendChild(bg);
+  const close = () => bg.remove();
+  bg.addEventListener('click', e => { if (e.target === bg) close(); });
+  $('#detail-close', bg).addEventListener('click', close);
+  $('#detail-delete', bg).addEventListener('click', async () => {
+    if (confirm('Delete this meal?')) { await dbDelete(id); close(); renderHistory(); toast('Deleted'); }
+  });
+}
+
+/* ---------- TRENDS ---------- */
+let trendRange = 7;
+function localKey(d) { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 10); }
+function eatenColor(f) { return f >= 0.7 ? 'var(--green)' : f >= 0.35 ? 'var(--accent)' : 'var(--red)'; }
+function prettyShort(d) { return new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
+function pcfTiles(o) {
+  const items = [['protein_g', 'Protein', 'var(--green)'], ['carbs_g', 'Carbs', 'var(--accent-ink)'], ['fat_g', 'Fat', 'var(--red)']];
+  return '<div class="macro-grid">' + items.map(([k, l, c]) =>
+    `<div class="macro"><div class="mval" style="color:${c}">${Math.round(o[k] || 0)}<span class="munit"> g</span></div><div class="mlabel">${l}</div></div>`).join('') + '</div>';
+}
+function foodStatRow(f) {
+  const pct = Math.round(f.avg * 100), col = eatenColor(f.avg);
+  return `<div class="food-stat"><div class="fname">${escapeHtml(f.name)}<div class="fmeta">tried ${f.n}×</div></div><div class="mini-track"><div class="mini-fill" style="width:${pct}%;background:${col}"></div></div><div class="fpct" style="color:${col}">${pct}%</div></div>`;
+}
+
+async function renderTrends() {
+  const el = $('#trends-body');
+  const entries = await dbAll();
+  if (!entries.length) {
+    el.innerHTML = `<div class="empty"><div class="big">📈</div><div>No data yet.<br>Log a few meals and her trends will show up here!</div></div>`;
+    return;
+  }
+  // Today's totals
+  const todayKey = localKey(new Date());
+  const today = { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 };
+  let todayMeals = 0;
+  for (const e of entries) if (dayKey(e.when) === todayKey) { todayMeals++; if (e.nutrition) for (const k in today) today[k] += (+e.nutrition[k] || 0); }
+
+  // Per-day totals across the selected range
+  const days = [];
+  for (let i = trendRange - 1; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); days.push(d); }
+  const totals = days.map(d => {
+    const key = localKey(d);
+    const t = { key, cal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, meals: 0 };
+    for (const e of entries) if (dayKey(e.when) === key) {
+      t.meals++;
+      if (e.nutrition) { t.cal += +e.nutrition.calories || 0; t.protein_g += +e.nutrition.protein_g || 0; t.carbs_g += +e.nutrition.carbs_g || 0; t.fat_g += +e.nutrition.fat_g || 0; }
+    }
+    return t;
+  });
+  const active = totals.filter(t => t.meals > 0);
+  const avg = k => active.length ? active.reduce((s, t) => s + t[k], 0) / active.length : 0;
+  const avgObj = { protein_g: avg('protein_g'), carbs_g: avg('carbs_g'), fat_g: avg('fat_g') };
+  const maxCal = Math.max(1, ...totals.map(t => t.cal));
+
+  // Food preferences within range
+  const rangeStart = days[0];
+  const fmap = {};
+  for (const e of entries) {
+    const d = new Date(e.when); if (isNaN(d) || d < rangeStart) continue;
+    for (const f of (e.foods || [])) {
+      const name = (f.name || '').trim(); if (!name) continue;
+      const key = name.toLowerCase();
+      (fmap[key] = fmap[key] || { name, sum: 0, n: 0 });
+      fmap[key].sum += (+f.eaten_fraction || 0); fmap[key].n++;
+    }
+  }
+  const foods = Object.values(fmap).map(f => ({ name: f.name, n: f.n, avg: f.sum / f.n }));
+  const loves = foods.filter(f => f.avg >= 0.65).sort((a, b) => b.avg - a.avg || b.n - a.n).slice(0, 6);
+  const skips = foods.filter(f => f.avg <= 0.40).sort((a, b) => a.avg - b.avg || b.n - a.n).slice(0, 6);
+
+  const chart = `<div class="chart">${totals.map(t => {
+    const h = t.cal ? Math.max(3, Math.round(t.cal / maxCal * 100)) : 2;
+    const lab = trendRange <= 7 ? ['S', 'M', 'T', 'W', 'T', 'F', 'S'][new Date(t.key + 'T00:00').getDay()] : '';
+    const val = (trendRange <= 7 && t.cal) ? Math.round(t.cal) : '';
+    return `<div class="col"><div class="cval">${val}</div><div class="bar" style="height:${h}%"></div><div class="clab">${lab}</div></div>`;
+  }).join('')}</div>`;
+
+  el.innerHTML = `
+    <div class="card">
+      <div class="fld" style="text-align:center;margin-bottom:2px">Today</div>
+      <div class="hero">
+        <div class="cal">${Math.round(today.calories)}<span class="u"> kcal</span></div>
+        <div class="subm">${todayMeals ? todayMeals + (todayMeals === 1 ? ' meal' : ' meals') + ' logged today' : 'No meals logged today yet'}</div>
+        ${pcfTiles(today)}
+      </div>
+    </div>
+
+    <div class="range-toggle">
+      ${[7, 14, 30].map(r => `<div class="chip ${r === trendRange ? 'on' : ''}" data-range="${r}">${r} days</div>`).join('')}
+    </div>
+
+    <div class="card">
+      <h2>🔥 Calories per day</h2>
+      ${chart}
+      <p class="note" style="text-align:center;margin:12px 0 0">${prettyShort(days[0])} – ${prettyShort(days[days.length - 1])}${active.length ? ' · avg <b>' + Math.round(avg('cal')) + '</b> kcal per logged day' : ''}</p>
+    </div>
+
+    <div class="card">
+      <h2>📊 Avg daily macros <span class="est">${active.length} logged ${active.length === 1 ? 'day' : 'days'}</span></h2>
+      ${pcfTiles(avgObj)}
+    </div>
+
+    <div class="card">
+      <h2>😋 Foods she loves</h2>
+      ${loves.length ? loves.map(foodStatRow).join('') : '<p class="note" style="margin:0">Not enough data yet.</p>'}
+    </div>
+
+    <div class="card">
+      <h2>😐 Often leaves these</h2>
+      ${skips.length ? skips.map(foodStatRow).join('') : '<p class="note" style="margin:0">Nothing she consistently skips — nice!</p>'}
+    </div>
+    <div style="height:16px"></div>`;
+
+  $$('.range-toggle .chip').forEach(c => c.addEventListener('click', () => { trendRange = +c.dataset.range; renderTrends(); }));
+}
+
+/* ---------- SETTINGS ---------- */
+function refreshSettings() {
+  $('#api-key').value = settings.key;
+  $('#model').value = settings.model;
+  $('#key-status').textContent = settings.key ? '✓ Key saved on this device' : 'No key saved yet';
+}
+$('#save-key').addEventListener('click', () => { settings.key = $('#api-key').value.trim(); refreshSettings(); toast('Key saved'); });
+$('#model').addEventListener('change', () => { settings.model = $('#model').value; toast('Model set'); });
+$('#test-key').addEventListener('click', async () => {
+  const key = $('#api-key').value.trim();
+  if (!key) { toast('Enter a key first'); return; }
+  $('#key-status').textContent = 'Testing…';
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type':'application/json', 'x-api-key':key, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+      body: JSON.stringify({ model: settings.model, max_tokens: 8, messages:[{role:'user',content:'hi'}] })
+    });
+    if (r.ok) { settings.key = key; $('#key-status').textContent = '✓ Key works!'; toast('Key works 🎉'); }
+    else { const e = await r.json().catch(()=>({})); $('#key-status').textContent = '✗ ' + (e?.error?.message || ('HTTP '+r.status)); }
+  } catch (err) { $('#key-status').textContent = '✗ ' + err.message; }
+});
+
+$('#export-btn').addEventListener('click', async () => {
+  const entries = await dbAll();
+  const out = [];
+  for (const e of entries) {
+    const o = { ...e };
+    // legacy safety: convert any old Blob photo fields to data URLs
+    if (e.beforeBlob instanceof Blob) { o.beforeImg = await blobToDataUrl(e.beforeBlob); delete o.beforeBlob; }
+    if (e.afterBlob  instanceof Blob) { o.afterImg  = await blobToDataUrl(e.afterBlob);  delete o.afterBlob; }
+    out.push(o);
+  }
+  const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'little-plate-backup-' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+  toast('Exported ' + out.length + ' meals');
+});
+$('#clear-btn').addEventListener('click', async () => {
+  if (confirm('Delete ALL meals from this device? This cannot be undone.')) {
+    await dbClear(); renderHistory(); toast('All data cleared');
+  }
+});
+function blobToDataUrl(blob) {
+  return new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob); });
+}
+
+/* ---------- util ---------- */
+function escapeHtml(s) { return (s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ---------- init ---------- */
+$('#when').value = nowLocalInput();
+$$('#meal-chips .chip').forEach(c => c.classList.toggle('on', c.dataset.meal === compose.meal));
+renderPhotoRow('before'); renderPhotoRow('after');
+updateAnalyzeBtn();
+
+// register service worker (only works over https/localhost; harmless otherwise)
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
