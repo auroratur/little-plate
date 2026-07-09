@@ -1,7 +1,9 @@
 /* Little Plate service worker — network-first so updates always load.
    Falls back to cache only when offline. Only runs over HTTPS/localhost. */
-const CACHE = 'little-plate-v4';
-const SHELL = ['./', './index.html', './manifest.webmanifest', './supabase.js', './icon.svg', './icon-180.png', './icon-192.png', './icon-512.png'];
+const CACHE = 'little-plate-v5';
+const SHELL = ['./', './index.html', './manifest.webmanifest', './supabase.js', './icon.svg', './icon-180.png', './icon-192.png', './icon-512.png',
+  './fonts/poppins-600.woff2', './fonts/poppins-700.woff2', './fonts/poppins-800.woff2',
+  './fonts/inter-400.woff2', './fonts/inter-500.woff2', './fonts/inter-600.woff2', './fonts/inter-700.woff2'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
