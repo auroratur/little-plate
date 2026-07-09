@@ -286,6 +286,11 @@
   <!-- ============ SETTINGS TAB ============ -->
   <section id="tab-settings" class="hidden">
     <div class="card">
+      <h2>☁️ Account &amp; Sync</h2>
+      <div id="account-body"></div>
+    </div>
+
+    <div class="card">
       <h2>🔑 Anthropic API Key</h2>
       <p class="note" style="margin-top:0">Needed for AI photo analysis. Stored only on this device (in your browser), never sent anywhere except Anthropic. Get one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>.</p>
       <input type="password" id="api-key" placeholder="sk-ant-..." autocomplete="off" autocapitalize="off" spellcheck="false">
@@ -330,6 +335,7 @@
 
 <div id="toast" class="toast"></div>
 
+<script src="supabase.js"></script>
 <script>
 /* ------------------------------------------------------------------ *
  *  Little Plate — toddler food tracker (single-file PWA)
@@ -339,6 +345,14 @@
 
 const $ = (s, r=document) => r.querySelector(s);
 const $$ = (s, r=document) => [...r.querySelectorAll(s)];
+
+/* ---------- Supabase (cloud sync) — anon key is public by design, RLS protects the data ---------- */
+const SUPABASE_URL = 'https://ywiwqmvzniseeuudntif.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl3aXdxbXZ6bmlzZWV1dWRudGlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM1ODQzNzAsImV4cCI6MjA5OTE2MDM3MH0.yajbA4JuWqJTRmNAA4Pns-N_QLAUMuH3HTtUsw5bdYs';
+const sb = (window.supabase && window.supabase.createClient)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON, { auth: { persistSession: true, autoRefreshToken: true } })
+  : null;
+let currentUser = null;
 
 /* ---------- settings (localStorage) ---------- */
 const settings = {
@@ -380,6 +394,15 @@ async function dbAll() {
     cur.onerror = () => rej(cur.error);
   });
 }
+async function dbGet(id) {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const r = d.transaction('entries').objectStore('entries').get(id);
+    r.onsuccess = () => res(r.result || null);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function dbActive() { return (await dbAll()).filter(e => !e.deleted); }
 async function dbDelete(id) {
   const d = await db();
   return new Promise((res, rej) => {
@@ -473,7 +496,7 @@ function showTab(name) {
   $$('nav.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
   if (name === 'history') renderHistory();
   if (name === 'trends') renderTrends();
-  if (name === 'settings') refreshSettings();
+  if (name === 'settings') { refreshSettings(); renderAccount(); }
   window.scrollTo(0, 0);
 }
 $$('nav.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
@@ -768,7 +791,7 @@ function fractionPhrase(f) {
 /* ---------- LOG: save ---------- */
 async function saveEntry() {
   const entry = {
-    id: Date.now(),
+    id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
     when: $('#when').value || nowLocalInput(),
     meal: compose.meal,
     foods: compose.foods.filter(f => f.name.trim()),
@@ -777,10 +800,14 @@ async function saveEntry() {
     model: compose.analyzedModel,
     // Stored as data-URL strings (not Blobs) — reliable in IndexedDB on iOS Safari.
     beforeImgs: compose.before.map(p => p.dataUrl),
-    afterImgs: compose.after.map(p => p.dataUrl)
+    afterImgs: compose.after.map(p => p.dataUrl),
+    deleted: false,
+    updatedAt: new Date().toISOString(),
+    dirty: true
   };
   try {
     await dbPut(entry);
+    bestEffortPush();
     resetCompose();
     toast('Saved 🎉');
     showTab('history');
@@ -812,7 +839,7 @@ function prettyTime(whenStr) {
 }
 async function renderHistory() {
   const list = $('#history-list');
-  const entries = (await dbAll()).sort((a, b) => (b.when || '').localeCompare(a.when || '') || b.id - a.id);
+  const entries = (await dbActive()).sort((a, b) => (b.when || '').localeCompare(a.when || ''));
   if (!entries.length) {
     list.innerHTML = `<div class="empty"><div class="big">🍽️</div><div>No meals logged yet.<br>Tap <b>Log</b> to add the first one!</div></div>`;
     return;
@@ -852,13 +879,13 @@ async function renderHistory() {
     }
   }
   list.innerHTML = html;
-  $$('.entry', list).forEach(el => el.addEventListener('click', () => openDetail(+el.dataset.id)));
+  $$('.entry', list).forEach(el => el.addEventListener('click', () => openDetail(el.dataset.id)));
 }
 function mealEmoji(m) { return ({ Breakfast:'🥣', Lunch:'🥪', Dinner:'🍝', Snack:'🍎' })[m] || '🍽️'; }
 
 /* ---------- DETAIL sheet ---------- */
 async function openDetail(id) {
-  const entry = (await dbAll()).find(e => e.id === id);
+  const entry = (await dbAll()).find(e => String(e.id) === String(id));
   if (!entry) return;
   const bg = document.createElement('div');
   bg.className = 'sheet-bg';
@@ -900,7 +927,7 @@ async function openDetail(id) {
   bg.addEventListener('click', e => { if (e.target === bg) close(); });
   $('#detail-close', bg).addEventListener('click', close);
   $('#detail-delete', bg).addEventListener('click', async () => {
-    if (confirm('Delete this meal?')) { await dbDelete(id); close(); renderHistory(); toast('Deleted'); }
+    if (confirm('Delete this meal?')) { await softDeleteEntry(id); close(); renderHistory(); toast('Deleted'); }
   });
 }
 
@@ -921,7 +948,7 @@ function foodStatRow(f) {
 
 async function renderTrends() {
   const el = $('#trends-body');
-  const entries = await dbAll();
+  const entries = await dbActive();
   if (!entries.length) {
     el.innerHTML = `<div class="empty"><div class="big">📈</div><div>No data yet.<br>Log a few meals and her trends will show up here!</div></div>`;
     return;
@@ -1011,6 +1038,170 @@ async function renderTrends() {
   $$('.range-toggle .chip').forEach(c => c.addEventListener('click', () => { trendRange = +c.dataset.range; renderTrends(); }));
 }
 
+/* ---------- CLOUD SYNC (Supabase) ---------- */
+function toRow(e, uid) {
+  return {
+    id: String(e.id), user_id: uid,
+    when_at: e.when || null, meal: e.meal || null,
+    foods: e.foods || [], nutrition: e.nutrition || null,
+    overall: e.overall || null, model: e.model || null,
+    before_imgs: e.beforeImgs || [], after_imgs: e.afterImgs || [],
+    deleted: !!e.deleted, updated_at: e.updatedAt || new Date().toISOString()
+  };
+}
+function fromRow(row) {
+  return {
+    id: row.id, when: row.when_at || '', meal: row.meal || '',
+    foods: row.foods || [], nutrition: row.nutrition || null,
+    overall: row.overall || '', model: row.model || null,
+    beforeImgs: row.before_imgs || [], afterImgs: row.after_imgs || [],
+    deleted: !!row.deleted, updatedAt: row.updated_at, dirty: false
+  };
+}
+// one-time: make all local ids strings so they line up with cloud rows
+async function migrateIdsToString() {
+  if (localStorage.getItem('lp_idmigrated')) return;
+  for (const e of await dbAll()) {
+    if (typeof e.id !== 'string') { await dbDelete(e.id); e.id = String(e.id); await dbPut(e); }
+  }
+  localStorage.setItem('lp_idmigrated', '1');
+}
+async function pushDirty() {
+  if (!sb || !currentUser) return;
+  const dirty = (await dbAll()).filter(e => e.dirty !== false);   // undefined (legacy) or true → needs upload
+  if (!dirty.length) return;
+  for (let i = 0; i < dirty.length; i += 8) {
+    const chunk = dirty.slice(i, i + 8);
+    const { error } = await sb.from('meals').upsert(chunk.map(e => toRow(e, currentUser.id)));
+    if (error) throw error;
+    for (const e of chunk) { e.dirty = false; await dbPut(e); }
+  }
+}
+async function pullRemote() {
+  if (!sb || !currentUser) return;
+  const since = localStorage.getItem('lp_lastpull') || '1970-01-01T00:00:00Z';
+  const { data, error } = await sb.from('meals').select('*').gt('updated_at', since).order('updated_at', { ascending: true }).limit(5000);
+  if (error) throw error;
+  let maxT = new Date(since).getTime();
+  for (const row of (data || [])) {
+    const rt = new Date(row.updated_at).getTime();
+    if (rt > maxT) maxT = rt;
+    const local = await dbGet(row.id);
+    if (!local || rt > new Date(local.updatedAt || 0).getTime()) await dbPut(fromRow(row));
+  }
+  if (data && data.length) localStorage.setItem('lp_lastpull', new Date(maxT).toISOString());
+}
+let syncing = false;
+async function syncNow(showToast) {
+  if (!sb || !currentUser) { if (showToast) toast('Log in first'); return; }
+  if (syncing) return;
+  syncing = true; updateSyncStatus('Syncing…');
+  try {
+    await pushDirty();
+    await pullRemote();
+    localStorage.setItem('lp_lastsync', new Date().toISOString());
+    updateSyncStatus();
+    if (showToast) toast('Synced ✅');
+    if (!$('#tab-history').classList.contains('hidden')) renderHistory();
+    if (!$('#tab-trends').classList.contains('hidden')) renderTrends();
+  } catch (err) {
+    updateSyncStatus('Sync error: ' + (err.message || err));
+    if (showToast) toast('Sync failed: ' + (err.message || err));
+  } finally { syncing = false; }
+}
+function bestEffortPush() {
+  if (sb && currentUser && navigator.onLine) pushDirty().then(() => updateSyncStatus()).catch(() => {});
+}
+function updateSyncStatus(text) {
+  const el = $('#sync-status'); if (!el) return;
+  if (text) { el.textContent = text; return; }
+  const last = localStorage.getItem('lp_lastsync');
+  el.textContent = last ? 'Last synced ' + new Date(last).toLocaleString() : 'Not synced yet';
+}
+async function softDeleteEntry(id) {
+  const e = await dbGet(String(id)); if (!e) return;
+  e.deleted = true; e.updatedAt = new Date().toISOString(); e.dirty = true;
+  e.beforeImgs = []; e.afterImgs = []; e.foods = []; e.nutrition = null; e.overall = '';
+  await dbPut(e); bestEffortPush();
+}
+async function deleteAllData() {
+  for (const e of await dbActive()) {
+    e.deleted = true; e.updatedAt = new Date().toISOString(); e.dirty = true;
+    e.beforeImgs = []; e.afterImgs = []; e.foods = []; e.nutrition = null; e.overall = '';
+    await dbPut(e);
+  }
+  bestEffortPush();
+}
+
+/* ---------- AUTH ---------- */
+async function doAuth(mode) {
+  if (!sb) { toast('Sync library not loaded'); return; }
+  const email = $('#auth-email').value.trim();
+  const pass = $('#auth-pass').value;
+  const msg = $('#auth-msg');
+  if (!email || !pass) { msg.textContent = 'Enter email and password.'; return; }
+  if (pass.length < 6) { msg.textContent = 'Password must be at least 6 characters.'; return; }
+  msg.textContent = mode === 'signup' ? 'Creating account…' : 'Logging in…';
+  try {
+    const { data, error } = mode === 'signup'
+      ? await sb.auth.signUp({ email, password: pass })
+      : await sb.auth.signInWithPassword({ email, password: pass });
+    if (error) throw error;
+    if (!data.session) { msg.textContent = 'Account created — check your email to confirm, then log in.'; return; }
+    currentUser = data.user;
+    renderAccount();
+    toast('Signed in ✨');
+    await syncNow(true);
+  } catch (err) { msg.textContent = '✗ ' + (err.message || err); }
+}
+async function doLogout() {
+  if (sb) await sb.auth.signOut();
+  currentUser = null;
+  renderAccount();
+  toast('Logged out — your meals stay on this device');
+}
+function renderAccount() {
+  const body = $('#account-body'); if (!body) return;
+  if (!sb) { body.innerHTML = '<p class="note" style="margin:0">Cloud sync unavailable right now (couldn\'t load the sync library).</p>'; return; }
+  if (currentUser) {
+    body.innerHTML = `
+      <p class="note" style="margin-top:0">Signed in as <b>${escapeHtml(currentUser.email || '')}</b>. Your meals back up to the cloud and sync to any device you log in on.</p>
+      <div id="sync-status" class="note"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn small secondary" id="sync-now">↻ Sync now</button>
+        <button class="btn small ghost" id="logout-btn">Log out</button>
+      </div>`;
+    $('#sync-now').addEventListener('click', () => syncNow(true));
+    $('#logout-btn').addEventListener('click', doLogout);
+    updateSyncStatus();
+  } else {
+    body.innerHTML = `
+      <p class="note" style="margin-top:0">Log in to back up your meals to the cloud and sync across devices. First time? Tap <b>Sign up</b>.</p>
+      <input type="email" id="auth-email" placeholder="Email" autocomplete="username" autocapitalize="off" spellcheck="false">
+      <div style="height:8px"></div>
+      <input type="password" id="auth-pass" placeholder="Password (6+ characters)" autocomplete="current-password">
+      <div style="height:10px"></div>
+      <div class="row">
+        <button class="btn small" id="login-btn">Log in</button>
+        <button class="btn small secondary" id="signup-btn">Sign up</button>
+      </div>
+      <div id="auth-msg" class="note" style="margin-top:10px"></div>`;
+    $('#login-btn').addEventListener('click', () => doAuth('login'));
+    $('#signup-btn').addEventListener('click', () => doAuth('signup'));
+  }
+}
+async function initAuth() {
+  if (!sb) return;
+  const { data } = await sb.auth.getSession();
+  currentUser = data.session ? data.session.user : null;
+  sb.auth.onAuthStateChange((_e, session) => {
+    currentUser = session ? session.user : null;
+    if (!$('#tab-settings').classList.contains('hidden')) renderAccount();
+  });
+  if (currentUser) syncNow(false);
+}
+window.addEventListener('online', () => { if (currentUser) syncNow(false); });
+
 /* ---------- SETTINGS ---------- */
 function refreshSettings() {
   $('#api-key').value = settings.key;
@@ -1035,7 +1226,7 @@ $('#test-key').addEventListener('click', async () => {
 });
 
 $('#export-btn').addEventListener('click', async () => {
-  const entries = await dbAll();
+  const entries = await dbActive();
   const out = [];
   for (const e of entries) {
     const o = { ...e };
@@ -1052,9 +1243,10 @@ $('#export-btn').addEventListener('click', async () => {
   toast('Exported ' + out.length + ' meals');
 });
 $('#clear-btn').addEventListener('click', async () => {
-  if (confirm('Delete ALL meals from this device? This cannot be undone.')) {
-    await dbClear(); renderHistory(); toast('All data cleared');
-  }
+  const msg = currentUser
+    ? 'Delete ALL meals everywhere (this device AND the cloud)? This cannot be undone.'
+    : 'Delete ALL meals from this device? This cannot be undone.';
+  if (confirm(msg)) { await deleteAllData(); renderHistory(); toast('All data cleared'); }
 });
 function blobToDataUrl(blob) {
   return new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob); });
@@ -1068,6 +1260,9 @@ $('#when').value = nowLocalInput();
 $$('#meal-chips .chip').forEach(c => c.classList.toggle('on', c.dataset.meal === compose.meal));
 renderPhotoRow('before'); renderPhotoRow('after');
 updateAnalyzeBtn();
+
+// cloud sync: normalize ids, then restore session + background sync
+(async () => { try { await migrateIdsToString(); await initAuth(); } catch (e) { console.warn('sync init', e); } })();
 
 // register service worker (only works over https/localhost; harmless otherwise)
 if ('serviceWorker' in navigator) {
