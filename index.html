@@ -150,6 +150,14 @@
   .macro .mlabel { font-size: 10.5px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .3px; margin-top: 3px; }
   .macro input { width: 100%; text-align: center; font-size: 19px; font-weight: 800; padding: 2px 0; border: none; background: transparent; color: var(--ink); }
   .macro input::-webkit-outer-spin-button, .macro input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .macro[data-k] { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .macro[data-k].sel { border-color: var(--accent); background: var(--accent-soft); }
+  .bd-row { display: flex; align-items: center; gap: 10px; padding: 7px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .bd-row:last-child { border-bottom: none; }
+  .bd-name { flex: 1; font-weight: 600; min-width: 0; }
+  .bd-bar { width: 64px; height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; overflow: hidden; flex: 0 0 auto; }
+  .bd-fill { height: 100%; background: var(--accent); }
+  .bd-amt { font-weight: 700; min-width: 54px; text-align: right; }
   .day-macros { font-size: 12px; font-weight: 600; color: var(--ink-soft); text-transform: none; letter-spacing: 0; margin-top: 3px; }
   .day-macros b { color: var(--accent-ink); font-weight: 700; }
 
@@ -1046,9 +1054,18 @@ async function openDetail(id) {
   const photoRow = urls => urls.length
     ? `<div class="photo-row big">${urls.map(u => `<div class="photo-item" style="border-color:var(--line)"><img src="${u}"></div>`).join('')}</div>`
     : '<p class="note" style="margin-top:0">No photo</p>';
-  const nutriHtml = entry.nutrition
-    ? `<div style="margin-bottom:14px"><div class="fld" style="margin-bottom:8px">📊 Nutrition eaten <span class="est">estimated</span></div>${macroGridHtml(entry.nutrition)}</div>`
-    : '';
+  const hasPerFood = (entry.foods || []).some(f => f && f.nutrition);
+  const nutriHtml = entry.nutrition ? `
+    <div style="margin-bottom:14px">
+      <div class="fld" style="margin-bottom:8px">📊 Nutrition eaten <span class="est">estimated</span></div>
+      <div class="macro-grid" id="detail-macros">
+        ${MACROS.map(m => `<div class="macro ${m.cls || ''}"${hasPerFood ? ` data-k="${m.k}" role="button" tabindex="0"` : ''}>
+          <div class="mval">${Math.round((entry.nutrition[m.k]) || 0)}<span class="munit"> ${m.unit}</span></div>
+          <div class="mlabel">${m.label}</div>
+        </div>`).join('')}
+      </div>
+      ${hasPerFood ? '<div class="note" id="macro-bd-hint" style="margin:9px 2px 0">👆 Tap a macro to see which foods it came from.</div><div id="macro-bd"></div>' : ''}
+    </div>` : '';
   const foodsHtml = (entry.foods || []).map(f => `
     <div class="food">
       <div class="top"><span class="name">${escapeHtml(f.name)}</span>${eatenBadge(f.eaten_fraction ?? 0)}</div>
@@ -1085,6 +1102,30 @@ async function openDetail(id) {
   $('#detail-delete', bg).addEventListener('click', async () => {
     if (confirm('Delete this meal?')) { await softDeleteEntry(id); close(); renderHistory(); toast('Deleted'); }
   });
+  // Tap a macro tile → show how much of it came from each food
+  if (hasPerFood) {
+    const fmtAmt = g => g >= 10 ? String(Math.round(g)) : String(Math.round(g * 10) / 10);
+    const showBreakdown = k => {
+      const m = MACROS.find(x => x.k === k);
+      $$('#detail-macros .macro', bg).forEach(t => t.classList.toggle('sel', t.dataset.k === k));
+      const rows = (entry.foods || []).map(f => {
+        const ef = Math.max(0, Math.min(1, f.eaten_fraction ?? 0));
+        return { name: f.name || 'Food', g: f.nutrition ? (+f.nutrition[k] || 0) * ef : 0 };
+      }).filter(r => r.g > 0.05).sort((a, b) => b.g - a.g);
+      const total = rows.reduce((s, r) => s + r.g, 0);
+      const hint = $('#macro-bd-hint', bg); if (hint) hint.style.display = 'none';
+      $('#macro-bd', bg).innerHTML =
+        `<div class="fld" style="margin:14px 0 4px">${m.label} eaten — ${fmtAmt(total)} ${m.unit} total</div>` +
+        (rows.length ? rows.map(r => {
+          const pct = total ? Math.round(r.g / total * 100) : 0;
+          return `<div class="bd-row"><div class="bd-name">${escapeHtml(r.name)}</div><div class="bd-bar"><div class="bd-fill" style="width:${pct}%"></div></div><div class="bd-amt">${fmtAmt(r.g)} ${m.unit}</div></div>`;
+        }).join('') : '<p class="note" style="margin:0">Nothing eaten contributed to this.</p>');
+    };
+    $$('#detail-macros .macro[data-k]', bg).forEach(tile => {
+      tile.addEventListener('click', () => showBreakdown(tile.dataset.k));
+      tile.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showBreakdown(tile.dataset.k); } });
+    });
+  }
 }
 
 /* ---------- TRENDS ---------- */
