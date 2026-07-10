@@ -546,6 +546,19 @@ function nowLocalInput() {
 }
 
 /* ---------- LOG: analyze ---------- */
+const NUTR_OBJ = {
+  type: 'object',
+  properties: {
+    calories:  { type: 'number' },
+    protein_g: { type: 'number' },
+    carbs_g:   { type: 'number' },
+    fat_g:     { type: 'number' },
+    sugar_g:   { type: 'number' },
+    fiber_g:   { type: 'number' }
+  },
+  required: ['calories', 'protein_g', 'carbs_g', 'fat_g', 'sugar_g', 'fiber_g'],
+  additionalProperties: false
+};
 const SCHEMA = {
   type: 'object',
   properties: {
@@ -557,24 +570,12 @@ const SCHEMA = {
           name: { type: 'string' },
           quantity: { type: 'string' },
           eaten_fraction: { type: 'number' },
-          amount_eaten: { type: 'string' }
+          amount_eaten: { type: 'string' },
+          nutrition: NUTR_OBJ            // for the FULL served quantity; scaled by eaten_fraction client-side
         },
-        required: ['name', 'quantity', 'eaten_fraction', 'amount_eaten'],
+        required: ['name', 'quantity', 'eaten_fraction', 'amount_eaten', 'nutrition'],
         additionalProperties: false
       }
-    },
-    nutrition: {
-      type: 'object',
-      properties: {
-        calories:  { type: 'number' },
-        protein_g: { type: 'number' },
-        carbs_g:   { type: 'number' },
-        fat_g:     { type: 'number' },
-        sugar_g:   { type: 'number' },
-        fiber_g:   { type: 'number' }
-      },
-      required: ['calories', 'protein_g', 'carbs_g', 'fat_g', 'sugar_g', 'fiber_g'],
-      additionalProperties: false
     },
     extra_after_foods: {
       type: 'array',
@@ -587,11 +588,11 @@ const SCHEMA = {
     },
     overall: { type: 'string' }
   },
-  required: ['foods', 'nutrition', 'extra_after_foods', 'overall'],
+  required: ['foods', 'extra_after_foods', 'overall'],
   additionalProperties: false
 };
 
-// used when re-estimating eaten amounts + nutrition from corrected foods/quantities
+// re-estimate eaten amounts + per-food nutrition from corrected foods/quantities
 const RECALC_SCHEMA = {
   type: 'object',
   properties: {
@@ -599,14 +600,13 @@ const RECALC_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { name: { type: 'string' }, eaten_fraction: { type: 'number' }, amount_eaten: { type: 'string' } },
-        required: ['name', 'eaten_fraction', 'amount_eaten'],
+        properties: { name: { type: 'string' }, eaten_fraction: { type: 'number' }, amount_eaten: { type: 'string' }, nutrition: NUTR_OBJ },
+        required: ['name', 'eaten_fraction', 'amount_eaten', 'nutrition'],
         additionalProperties: false
       }
-    },
-    nutrition: SCHEMA.properties.nutrition
+    }
   },
-  required: ['foods', 'nutrition'],
+  required: ['foods'],
   additionalProperties: false
 };
 
@@ -620,12 +620,9 @@ For EACH distinct food or drink item that appears in the BEFORE photos:
 - quantity: the estimated amount SERVED before eating, as a short phrase (e.g. "about ¼ cup", "1 slice", "2 tablespoons", "a small handful", "half a banana").
 - eaten_fraction: the fraction of the TOTAL served amount that was actually EATEN (ingested), from 0 to 1. Food still on the plate was NOT eaten. Food that was spilled or thrown is NOT eaten either — do not count it as eaten.
 - amount_eaten: a short human phrase, e.g. "ate about half", "ate it all", "threw most on the floor", "a few bites then spilled the rest".
+- nutrition: the nutrition facts for the FULL SERVED quantity of this food — the whole amount served, as if all of it were eaten (the app scales this down by how much was actually eaten). Give calories (kcal), protein_g, carbs_g, fat_g, sugar_g, fiber_g, based on the identified food and its served quantity. Use real published values for named brands/products. Toddler-sized.
 
-Then estimate "nutrition" — the approximate nutrition of the portion the toddler ACTUALLY ATE (i.e. what disappeared between before and after, not what was served). Give realistic toddler-sized numbers:
-- calories (kcal), protein_g, carbs_g, fat_g, sugar_g, fiber_g — all in grams except calories.
-Base it on the identified foods and how much of each was eaten. If almost nothing was eaten, these should be near zero. These are rough estimates from photos, so approximate sensibly.
-
-Next, "extra_after_foods": look carefully at the AFTER photos for any distinct food or drink that does NOT appear in ANY of the before photos — something that only shows up afterward. List each as { name, note } where note briefly says what/where it is (e.g. "on the tray, wasn't in the before photo"). Do NOT include these items in "foods" or in "nutrition". If everything in the after photos was already present in the before photos, return an empty array.
+Next, "extra_after_foods": look carefully at the AFTER photos for any distinct food or drink that does NOT appear in ANY of the before photos — something that only shows up afterward. List each as { name, note } where note briefly says what/where it is (e.g. "on the tray, wasn't in the before photo"). Do NOT include these items in "foods". If everything in the after photos was already present in the before photos, return an empty array.
 
 Then write "overall": one short, warm sentence summarizing the meal. If a lot was spilled or thrown rather than eaten, mention that gently.
 
@@ -672,10 +669,10 @@ async function analyze() {
     const textBlock = (data.content || []).find(b => b.type === 'text');
     const parsed = JSON.parse(textBlock.text);
     compose.foods = parsed.foods || [];
-    compose.nutrition = parsed.nutrition || null;
     compose.overall = parsed.overall || '';
     compose.extras = parsed.extra_after_foods || [];
     compose.analyzedModel = settings.model;
+    syncNutritionFromFoods();   // eaten total = Σ per-food nutrition × eaten fraction
     renderResults();
     toast('Done! Review & save 👇');
   } catch (err) {
@@ -722,11 +719,10 @@ ${lines}
 For EACH food, using the AFTER photos and the served quantity, estimate:
 - eaten_fraction (0 to 1): how much of the SERVED quantity was actually EATEN — the part no longer visible on the plate/bowl in the after photos and NOT spilled or thrown (food on the floor/tray/bib is not eaten). If there are NO after photos, keep the food's current eaten estimate shown above.
 - amount_eaten: a short phrase (e.g. "ate about half", "ate it all", "barely touched").
+- nutrition: the nutrition facts for the FULL SERVED quantity of this food (the whole amount served, as if all of it were eaten): calories (kcal), protein_g, carbs_g, fat_g, sugar_g, fiber_g. Use real published facts for named brands/products. Toddler-sized.
 
-Then compute "nutrition" — the totals for the portion ACTUALLY EATEN across all items (served quantity × eaten_fraction): calories (kcal), protein_g, carbs_g, fat_g, sugar_g, fiber_g. Use the real published nutrition facts for any named brand/product you recognize. Toddler-sized and realistic.
-
-Return "foods" with one entry per food listed above (use the same name), plus "nutrition".` });
-    const body = { model: settings.model, max_tokens: 1200, messages: [{ role: 'user', content }], output_config: { format: { type: 'json_schema', schema: RECALC_SCHEMA } } };
+Return "foods" with one entry per food listed above (use the same name), each with eaten_fraction, amount_eaten, and nutrition (for the full served quantity).` });
+    const body = { model: settings.model, max_tokens: 1500, messages: [{ role: 'user', content }], output_config: { format: { type: 'json_schema', schema: RECALC_SCHEMA } } };
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': settings.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
@@ -747,10 +743,10 @@ Return "foods" with one entry per food listed above (use the same name), plus "n
       const o = sent[mi];
       if (typeof r.eaten_fraction === 'number') compose.foods[o.idx].eaten_fraction = Math.max(0, Math.min(1, r.eaten_fraction));
       if (r.amount_eaten) compose.foods[o.idx].amount_eaten = r.amount_eaten;
+      if (r.nutrition) compose.foods[o.idx].nutrition = r.nutrition;
     }
-    compose.nutrition = parsed.nutrition;
     paintFoodList();
-    MACROS.forEach(m => { const inp = document.querySelector(`#macro-inputs input[data-k="${m.k}"]`); if (inp) inp.value = Math.round((compose.nutrition && compose.nutrition[m.k]) || 0); });
+    syncNutritionFromFoods();
     toast('Re-estimated eaten amounts & nutrition ✨');
   } catch (err) {
     toast('Recalc failed: ' + (err.message || err));
@@ -796,7 +792,7 @@ function renderResults() {
             <div class="mlabel">${m.label} <span class="munit">${m.unit}</span></div>
           </div>`).join('')}
       </div>
-      <p class="note" style="margin:0 0 10px">Fix any food, brand or quantity above, then re-estimate — the AI reads the after photos to judge how much of each was eaten and recomputes nutrition. You can also edit any number directly.</p>
+      <p class="note" style="margin:0 0 10px">This total updates automatically as you set how much of each food was eaten. Tap a number to fine-tune. Use ↻ Re-estimate only if you want the AI to re-judge the eaten amounts (and per-food nutrition) from the photos.</p>
       <button class="btn small secondary" id="recalc-nutri" style="width:100%">↻ Re-estimate eaten &amp; nutrition</button>
     </div>
     <button class="btn" id="save-entry">${editingId ? '💾 Update meal' : '💾 Save this meal'}</button>
@@ -882,9 +878,10 @@ function paintFoodList() {
       compose.foods[i].eaten_fraction = v / 100;
       compose.foods[i].amount_eaten = fractionPhrase(v / 100);
       pctEl.innerHTML = v + '% ' + eatenBadge(v / 100);
+      syncNutritionFromFoods();   // nutrition follows the sliders, live
     });
     row.querySelector('.del').addEventListener('click', () => {
-      compose.foods.splice(i, 1); paintFoodList();
+      compose.foods.splice(i, 1); paintFoodList(); syncNutritionFromFoods();
     });
     list.appendChild(row);
   });
@@ -895,6 +892,26 @@ function fractionPhrase(f) {
   if (f >= 0.4)  return 'ate about half';
   if (f >= 0.15) return 'ate a few bites';
   return 'barely touched';
+}
+// Eaten nutrition total = Σ over foods of (per-food full-serving nutrition × eaten fraction).
+// Returns null for older meals that have no per-food nutrition (keeps their stored total).
+function eatenNutritionFromFoods() {
+  if (!compose.foods || !compose.foods.some(f => f && f.nutrition)) return null;
+  const t = { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0, sugar_g: 0, fiber_g: 0 };
+  for (const f of compose.foods) {
+    if (!f || !f.nutrition) continue;
+    const ef = Math.max(0, Math.min(1, f.eaten_fraction ?? 0));
+    for (const k in t) t[k] += (+f.nutrition[k] || 0) * ef;
+  }
+  return t;
+}
+function updateMacroTiles() {
+  MACROS.forEach(m => { const inp = document.querySelector(`#macro-inputs input[data-k="${m.k}"]`); if (inp) inp.value = Math.round((compose.nutrition && compose.nutrition[m.k]) || 0); });
+}
+// Recompute the eaten-nutrition total from the sliders (client-side, no AI call).
+function syncNutritionFromFoods() {
+  const t = eatenNutritionFromFoods();
+  if (t) { compose.nutrition = t; updateMacroTiles(); }
 }
 
 /* ---------- LOG: save ---------- */
