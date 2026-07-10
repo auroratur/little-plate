@@ -507,16 +507,17 @@ let addingTo = 'before';
 function renderPhotoRow(which) {
   const row = $('#row-' + which);
   const items = compose[which].map((p, i) =>
-    `<div class="photo-item"><img src="${p.dataUrl}"><button class="rm" data-rm="${which}" data-i="${i}">✕</button></div>`).join('');
-  row.innerHTML = items + `<div class="photo-add" data-add="${which}"><span class="icon">＋</span><span class="t">Add</span></div>`;
+    `<div class="photo-item"><img src="${p.dataUrl}"><button type="button" class="rm" data-i="${i}">✕</button></div>`).join('');
+  row.innerHTML = items + `<button type="button" class="photo-add"><span class="icon">＋</span><span class="t">Add</span></button>`;
+  // Direct listeners (more reliable on iOS than document-level delegation on a <div>)
+  row.querySelector('.photo-add').addEventListener('click', () => { addingTo = which; $('#file-input').click(); });
+  row.querySelectorAll('.rm').forEach(btn => btn.addEventListener('click', ev => {
+    ev.stopPropagation();
+    compose[which].splice(+btn.dataset.i, 1);
+    renderPhotoRow(which);
+    updateAnalyzeBtn();
+  }));
 }
-// delegated (rows re-render): tap add-tile → open picker; tap ✕ → remove that photo
-document.addEventListener('click', e => {
-  const add = e.target.closest('.photo-add');
-  if (add) { addingTo = add.dataset.add; $('#file-input').click(); return; }
-  const rm = e.target.closest('.rm');
-  if (rm) { compose[rm.dataset.rm].splice(+rm.dataset.i, 1); renderPhotoRow(rm.dataset.rm); updateAnalyzeBtn(); }
-});
 $('#file-input').addEventListener('change', async e => {
   const files = [...(e.target.files || [])];
   e.target.value = '';
@@ -590,11 +591,22 @@ const SCHEMA = {
   additionalProperties: false
 };
 
-// used when recalculating nutrition from user-corrected foods/brands
-const NUTRI_SCHEMA = {
+// used when re-estimating eaten amounts + nutrition from corrected foods/quantities
+const RECALC_SCHEMA = {
   type: 'object',
-  properties: { nutrition: SCHEMA.properties.nutrition },
-  required: ['nutrition'],
+  properties: {
+    foods: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { name: { type: 'string' }, eaten_fraction: { type: 'number' }, amount_eaten: { type: 'string' } },
+        required: ['name', 'eaten_fraction', 'amount_eaten'],
+        additionalProperties: false
+      }
+    },
+    nutrition: SCHEMA.properties.nutrition
+  },
+  required: ['foods', 'nutrition'],
   additionalProperties: false
 };
 
@@ -681,31 +693,40 @@ $('#manual-btn').addEventListener('click', () => {
   if (!compose.nutrition) compose.nutrition = { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0, sugar_g: 0, fiber_g: 0 };
   if (!compose.foods.length) compose.foods.push({ name: '', brand: '', quantity: '', eaten_fraction: 1, amount_eaten: 'ate it all' });
   renderResults();
-  $('#results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const first = document.querySelector('#food-list .name');
+  if (first) first.scrollIntoView({ block: 'center' });
 });
 
 // Recompute nutrition using the user-corrected food names + brands (exact identities).
 async function recalcNutrition() {
   if (!settings.key) { toast('Add your API key in Settings first'); showTab('settings'); return; }
-  if (!compose.foods || !compose.foods.length) { toast('Add or correct foods first'); return; }
+  const sent = compose.foods.map((f, idx) => ({ f, idx })).filter(o => (o.f.name || '').trim());
+  if (!sent.length) { toast('Add or correct foods first'); return; }
   const btn = $('#recalc-nutri');
   const orig = btn.innerHTML;
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Recalculating…';
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Re-estimating…';
   try {
-    const lines = compose.foods.filter(f => f.name.trim()).map(f => {
+    const lines = sent.map(o => {
+      const f = o.f;
       const label = [f.brand, f.name].filter(s => (s || '').trim()).join(' — ');
       const qty = (f.quantity || '').trim();
-      return `- ${label}${qty ? ' (' + qty + ' served)' : ''}: ate ${Math.round((f.eaten_fraction ?? 0) * 100)}% of the amount served`;
+      return `- ${label}${qty ? ' — served: ' + qty : ''} (current eaten estimate: ${Math.round((f.eaten_fraction ?? 0) * 100)}%)`;
     }).join('\n');
     const content = [];
-    compose.before.forEach(p => content.push({ type: 'text', text: 'Served photo:' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: p.base64 } }));
-    compose.after.forEach(p => content.push({ type: 'text', text: 'After photo:' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: p.base64 } }));
+    compose.before.forEach(p => content.push({ type: 'text', text: 'BEFORE / served photo:' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: p.base64 } }));
+    compose.after.forEach(p => content.push({ type: 'text', text: 'AFTER photo (leftovers & spills):' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: p.base64 } }));
     content.push({ type: 'text', text:
-`These are the EXACT foods for this toddler meal — the parent has confirmed each identity (and brand/product where given). Trust these identities over what the photos might look like:
+`These are the EXACT foods for this toddler meal — the parent has confirmed each identity (brand/product and served quantity where given):
 ${lines}
 
-Use these exact foods/brands, and the stated quantities (and the photos, if provided) to judge how much was SERVED. Then compute "nutrition" — the totals for the portion ACTUALLY EATEN across all items (served amount × the eaten % above): calories (kcal), protein_g, carbs_g, fat_g, sugar_g, fiber_g. Use the real published nutrition facts for any named brand or product you recognize. Keep it toddler-sized and realistic.` });
-    const body = { model: settings.model, max_tokens: 800, messages: [{ role: 'user', content }], output_config: { format: { type: 'json_schema', schema: NUTRI_SCHEMA } } };
+For EACH food, using the AFTER photos and the served quantity, estimate:
+- eaten_fraction (0 to 1): how much of the SERVED quantity was actually EATEN — the part no longer visible on the plate/bowl in the after photos and NOT spilled or thrown (food on the floor/tray/bib is not eaten). If there are NO after photos, keep the food's current eaten estimate shown above.
+- amount_eaten: a short phrase (e.g. "ate about half", "ate it all", "barely touched").
+
+Then compute "nutrition" — the totals for the portion ACTUALLY EATEN across all items (served quantity × eaten_fraction): calories (kcal), protein_g, carbs_g, fat_g, sugar_g, fiber_g. Use the real published nutrition facts for any named brand/product you recognize. Toddler-sized and realistic.
+
+Return "foods" with one entry per food listed above (use the same name), plus "nutrition".` });
+    const body = { model: settings.model, max_tokens: 1200, messages: [{ role: 'user', content }], output_config: { format: { type: 'json_schema', schema: RECALC_SCHEMA } } };
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': settings.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
@@ -714,11 +735,25 @@ Use these exact foods/brands, and the stated quantities (and the photos, if prov
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e?.error?.message || ('HTTP ' + res.status)); }
     const data = await res.json();
     const parsed = JSON.parse(data.content.find(b => b.type === 'text').text);
+    // apply per-food eaten estimates (match by name, in order; fall back to next unused)
+    const rf = parsed.foods || [];
+    const used = new Array(sent.length).fill(false);
+    for (const r of rf) {
+      const key = (r.name || '').trim().toLowerCase();
+      let mi = sent.findIndex((o, i) => !used[i] && (o.f.name || '').trim().toLowerCase() === key);
+      if (mi === -1) mi = sent.findIndex((o, i) => !used[i]);
+      if (mi === -1) continue;
+      used[mi] = true;
+      const o = sent[mi];
+      if (typeof r.eaten_fraction === 'number') compose.foods[o.idx].eaten_fraction = Math.max(0, Math.min(1, r.eaten_fraction));
+      if (r.amount_eaten) compose.foods[o.idx].amount_eaten = r.amount_eaten;
+    }
     compose.nutrition = parsed.nutrition;
+    paintFoodList();
     MACROS.forEach(m => { const inp = document.querySelector(`#macro-inputs input[data-k="${m.k}"]`); if (inp) inp.value = Math.round((compose.nutrition && compose.nutrition[m.k]) || 0); });
-    toast('Nutrition updated from your corrections ✨');
+    toast('Re-estimated eaten amounts & nutrition ✨');
   } catch (err) {
-    toast('Recalc failed: ' + err.message);
+    toast('Recalc failed: ' + (err.message || err));
   } finally {
     btn.disabled = false; btn.innerHTML = orig;
   }
@@ -740,11 +775,14 @@ function renderResults() {
     ${hasExtras ? `
     <div class="card" id="extras-card">
       <h2>👀 Also spotted after</h2>
-      <p class="note" style="margin-top:0">Seen in the AFTER photos but not in any before photo. Add each to the meal (then set its quantity), or ignore it.</p>
+      <p class="note" style="margin-top:0">Seen in the AFTER photos but not in any before photo. Add each to the meal and set how much was served — then tap <b>Re-estimate</b> below and the AI will judge how much of it was eaten. Or ignore it.</p>
       <div id="extras-list"></div>
     </div>` : ''}
     <div class="card">
-      <h2>🍴 What she ate <button class="btn small secondary" id="add-food" style="float:right;margin-top:-4px">＋ Add</button></h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <h2 style="margin:0">🍴 What she ate</h2>
+        <button type="button" class="btn small secondary" id="add-food">＋ Add</button>
+      </div>
       <div id="food-list"></div>
       <label class="fld" style="margin-top:6px">Overall note</label>
       <textarea id="overall-note" placeholder="Add your own notes…">${escapeHtml(compose.overall)}</textarea>
@@ -758,8 +796,8 @@ function renderResults() {
             <div class="mlabel">${m.label} <span class="munit">${m.unit}</span></div>
           </div>`).join('')}
       </div>
-      <p class="note" style="margin:0 0 10px">Estimated — fix any food, brand or quantity above, then recalculate. You can also tap any number to edit it directly.</p>
-      <button class="btn small secondary" id="recalc-nutri" style="width:100%">↻ Recalculate from foods, brands &amp; quantities</button>
+      <p class="note" style="margin:0 0 10px">Fix any food, brand or quantity above, then re-estimate — the AI reads the after photos to judge how much of each was eaten and recomputes nutrition. You can also edit any number directly.</p>
+      <button class="btn small secondary" id="recalc-nutri" style="width:100%">↻ Re-estimate eaten &amp; nutrition</button>
     </div>
     <button class="btn" id="save-entry">${editingId ? '💾 Update meal' : '💾 Save this meal'}</button>
     <div style="height:8px"></div>
@@ -771,6 +809,9 @@ function renderResults() {
   $('#add-food').addEventListener('click', () => {
     compose.foods.push({ name: '', brand: '', quantity: '', eaten_fraction: 0.5, amount_eaten: 'ate some' });
     paintFoodList();
+    const rows = document.querySelectorAll('#food-list .food');
+    const last = rows[rows.length - 1];
+    if (last) { last.scrollIntoView({ block: 'center' }); const n = last.querySelector('.name'); if (n) n.focus(); }
   });
   $$('#macro-inputs input').forEach(inp => inp.addEventListener('input', () => {
     if (!compose.nutrition) compose.nutrition = {};
