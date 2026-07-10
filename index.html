@@ -128,7 +128,8 @@
   .food .top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .food .name { flex: 1; font-weight: 700; font-size: 15px; }
   .food .name input { font-weight: 700; }
-  .food .brand { font-size: 13px; padding: 9px 11px; margin: 8px 0 2px; }
+  .food .brand { font-size: 13px; padding: 9px 11px; margin: 8px 0 6px; }
+  .food .qty { font-size: 13px; padding: 9px 11px; margin: 0 0 2px; }
   .food .del { background: none; border: none; color: var(--red); font-size: 18px; padding: 2px 6px; }
   .eaten-row { display: flex; align-items: center; gap: 10px; }
   .eaten-row input[type=range] { flex: 1; accent-color: var(--accent); }
@@ -264,6 +265,8 @@
     </div>
 
     <button class="btn" id="analyze-btn" disabled>✨ Analyze with AI</button>
+    <div style="height:8px"></div>
+    <button class="btn secondary" id="manual-btn">✏️ Add foods manually</button>
     <div style="height:12px"></div>
 
     <!-- results injected here -->
@@ -449,7 +452,8 @@ function processImage(file, maxEdge = 1024, quality = 0.82) {
 function blobToUrl(blob) { return URL.createObjectURL(blob); }
 
 /* ---------- transient "compose" state ---------- */
-let compose = { before: [], after: [], meal: 'Lunch', foods: null, nutrition: null, overall: '', analyzedModel: null };
+let compose = { before: [], after: [], meal: 'Lunch', foods: null, nutrition: null, overall: '', analyzedModel: null, extras: null };
+let editingId = null;   // set when editing a saved meal (vs. creating a new one)
 
 /* macro metadata (shared by editor, detail, daily totals) */
 const MACROS = [
@@ -550,10 +554,11 @@ const SCHEMA = {
         type: 'object',
         properties: {
           name: { type: 'string' },
+          quantity: { type: 'string' },
           eaten_fraction: { type: 'number' },
           amount_eaten: { type: 'string' }
         },
-        required: ['name', 'eaten_fraction', 'amount_eaten'],
+        required: ['name', 'quantity', 'eaten_fraction', 'amount_eaten'],
         additionalProperties: false
       }
     },
@@ -570,9 +575,18 @@ const SCHEMA = {
       required: ['calories', 'protein_g', 'carbs_g', 'fat_g', 'sugar_g', 'fiber_g'],
       additionalProperties: false
     },
+    extra_after_foods: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { name: { type: 'string' }, note: { type: 'string' } },
+        required: ['name', 'note'],
+        additionalProperties: false
+      }
+    },
     overall: { type: 'string' }
   },
-  required: ['foods', 'nutrition', 'overall'],
+  required: ['foods', 'nutrition', 'extra_after_foods', 'overall'],
   additionalProperties: false
 };
 
@@ -589,8 +603,9 @@ const INSTRUCTIONS =
 - BEFORE photos: everything that was served — possibly across multiple photos (seconds, or courses served at different times). Add them up as the TOTAL amount served.
 - AFTER photos: where the food ended up afterward — some may still be on the plate/bowl, and some may have been spilled or thrown elsewhere (floor, tray, highchair, bib). There may be several after photos.
 
-For EACH distinct food or drink item served:
+For EACH distinct food or drink item that appears in the BEFORE photos:
 - name: a short, friendly name (e.g. "Scrambled eggs", "Blueberries", "Toast", "Milk").
+- quantity: the estimated amount SERVED before eating, as a short phrase (e.g. "about ¼ cup", "1 slice", "2 tablespoons", "a small handful", "half a banana").
 - eaten_fraction: the fraction of the TOTAL served amount that was actually EATEN (ingested), from 0 to 1. Food still on the plate was NOT eaten. Food that was spilled or thrown is NOT eaten either — do not count it as eaten.
 - amount_eaten: a short human phrase, e.g. "ate about half", "ate it all", "threw most on the floor", "a few bites then spilled the rest".
 
@@ -598,9 +613,11 @@ Then estimate "nutrition" — the approximate nutrition of the portion the toddl
 - calories (kcal), protein_g, carbs_g, fat_g, sugar_g, fiber_g — all in grams except calories.
 Base it on the identified foods and how much of each was eaten. If almost nothing was eaten, these should be near zero. These are rough estimates from photos, so approximate sensibly.
 
+Next, "extra_after_foods": look carefully at the AFTER photos for any distinct food or drink that does NOT appear in ANY of the before photos — something that only shows up afterward. List each as { name, note } where note briefly says what/where it is (e.g. "on the tray, wasn't in the before photo"). Do NOT include these items in "foods" or in "nutrition". If everything in the after photos was already present in the before photos, return an empty array.
+
 Then write "overall": one short, warm sentence summarizing the meal. If a lot was spilled or thrown rather than eaten, mention that gently.
 
-Only list items that appear in the BEFORE photos. Be realistic; toddlers rarely finish everything.`;
+Only include items in "foods" that appear in the BEFORE photos. Be realistic; toddlers rarely finish everything.`;
 
 function buildAnalyzeContent() {
   const img = p => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: p.base64 } });
@@ -645,6 +662,7 @@ async function analyze() {
     compose.foods = parsed.foods || [];
     compose.nutrition = parsed.nutrition || null;
     compose.overall = parsed.overall || '';
+    compose.extras = parsed.extra_after_foods || [];
     compose.analyzedModel = settings.model;
     renderResults();
     toast('Done! Review & save 👇');
@@ -657,6 +675,15 @@ async function analyze() {
 }
 $('#analyze-btn').addEventListener('click', analyze);
 
+// Manual entry — build a meal by hand (e.g. if you forgot to take a photo)
+$('#manual-btn').addEventListener('click', () => {
+  if (!compose.foods) compose.foods = [];
+  if (!compose.nutrition) compose.nutrition = { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0, sugar_g: 0, fiber_g: 0 };
+  if (!compose.foods.length) compose.foods.push({ name: '', brand: '', quantity: '', eaten_fraction: 1, amount_eaten: 'ate it all' });
+  renderResults();
+  $('#results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
 // Recompute nutrition using the user-corrected food names + brands (exact identities).
 async function recalcNutrition() {
   if (!settings.key) { toast('Add your API key in Settings first'); showTab('settings'); return; }
@@ -667,7 +694,8 @@ async function recalcNutrition() {
   try {
     const lines = compose.foods.filter(f => f.name.trim()).map(f => {
       const label = [f.brand, f.name].filter(s => (s || '').trim()).join(' — ');
-      return `- ${label}: ate ${Math.round((f.eaten_fraction ?? 0) * 100)}% of the amount served`;
+      const qty = (f.quantity || '').trim();
+      return `- ${label}${qty ? ' (' + qty + ' served)' : ''}: ate ${Math.round((f.eaten_fraction ?? 0) * 100)}% of the amount served`;
     }).join('\n');
     const content = [];
     compose.before.forEach(p => content.push({ type: 'text', text: 'Served photo:' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: p.base64 } }));
@@ -676,7 +704,7 @@ async function recalcNutrition() {
 `These are the EXACT foods for this toddler meal — the parent has confirmed each identity (and brand/product where given). Trust these identities over what the photos might look like:
 ${lines}
 
-Use these exact foods/brands, and the photos to judge how much was SERVED. Then compute "nutrition" — the totals for the portion ACTUALLY EATEN across all items (served amount × the eaten % above): calories (kcal), protein_g, carbs_g, fat_g, sugar_g, fiber_g. Use the real published nutrition facts for any named brand or product you recognize. Keep it toddler-sized and realistic.` });
+Use these exact foods/brands, and the stated quantities (and the photos, if provided) to judge how much was SERVED. Then compute "nutrition" — the totals for the portion ACTUALLY EATEN across all items (served amount × the eaten % above): calories (kcal), protein_g, carbs_g, fat_g, sugar_g, fiber_g. Use the real published nutrition facts for any named brand or product you recognize. Keep it toddler-sized and realistic.` });
     const body = { model: settings.model, max_tokens: 800, messages: [{ role: 'user', content }], output_config: { format: { type: 'json_schema', schema: NUTRI_SCHEMA } } };
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -704,8 +732,17 @@ function eatenBadge(f) {
 }
 function renderResults() {
   if (!compose.foods) { $('#results').innerHTML = ''; return; }
+  const mb = $('#manual-btn'); if (mb) mb.classList.add('hidden');
+  const hasExtras = compose.extras && compose.extras.length;
   const el = $('#results');
   el.innerHTML = `
+    ${editingId ? '<div class="card" style="background:var(--accent-soft);border-color:var(--accent)"><b>✏️ Editing a saved meal.</b> Make changes, then tap Update.</div>' : ''}
+    ${hasExtras ? `
+    <div class="card" id="extras-card">
+      <h2>👀 Also spotted after</h2>
+      <p class="note" style="margin-top:0">Seen in the AFTER photos but not in any before photo. Add each to the meal (then set its quantity), or ignore it.</p>
+      <div id="extras-list"></div>
+    </div>` : ''}
     <div class="card">
       <h2>🍴 What she ate <button class="btn small secondary" id="add-food" style="float:right;margin-top:-4px">＋ Add</button></h2>
       <div id="food-list"></div>
@@ -721,17 +758,18 @@ function renderResults() {
             <div class="mlabel">${m.label} <span class="munit">${m.unit}</span></div>
           </div>`).join('')}
       </div>
-      <p class="note" style="margin:0 0 10px">Estimated from the photos — correct any food name or brand above, then recalculate. You can also tap any number to edit it directly.</p>
-      <button class="btn small secondary" id="recalc-nutri" style="width:100%">↻ Recalculate from foods &amp; brands</button>
+      <p class="note" style="margin:0 0 10px">Estimated — fix any food, brand or quantity above, then recalculate. You can also tap any number to edit it directly.</p>
+      <button class="btn small secondary" id="recalc-nutri" style="width:100%">↻ Recalculate from foods, brands &amp; quantities</button>
     </div>
-    <button class="btn" id="save-entry">💾 Save this meal</button>
+    <button class="btn" id="save-entry">${editingId ? '💾 Update meal' : '💾 Save this meal'}</button>
     <div style="height:8px"></div>
-    <button class="btn secondary" id="discard-entry">Discard</button>
+    <button class="btn secondary" id="discard-entry">${editingId ? 'Cancel' : 'Discard'}</button>
     <div style="height:20px"></div>`;
   paintFoodList();
+  if (hasExtras) paintExtras();
   $('#overall-note').addEventListener('input', e => compose.overall = e.target.value);
   $('#add-food').addEventListener('click', () => {
-    compose.foods.push({ name: '', eaten_fraction: 0.5, amount_eaten: 'ate some' });
+    compose.foods.push({ name: '', brand: '', quantity: '', eaten_fraction: 0.5, amount_eaten: 'ate some' });
     paintFoodList();
   });
   $$('#macro-inputs input').forEach(inp => inp.addEventListener('input', () => {
@@ -741,6 +779,36 @@ function renderResults() {
   $('#recalc-nutri').addEventListener('click', recalcNutrition);
   $('#save-entry').addEventListener('click', saveEntry);
   $('#discard-entry').addEventListener('click', resetCompose);
+}
+function paintExtras() {
+  const list = $('#extras-list'); if (!list) return;
+  list.innerHTML = '';
+  compose.extras.forEach((x, i) => {
+    const row = document.createElement('div');
+    row.className = 'food';
+    row.innerHTML = `
+      <div class="top"><span class="name">${escapeHtml(x.name)}</span></div>
+      ${x.note ? `<div class="amt" style="margin:2px 0 8px">${escapeHtml(x.note)}</div>` : ''}
+      <div class="row">
+        <button class="btn small" data-add-extra="${i}">➕ Add to meal</button>
+        <button class="btn small secondary" data-ignore-extra="${i}">Ignore</button>
+      </div>`;
+    row.querySelector('[data-add-extra]').addEventListener('click', () => {
+      compose.foods.push({ name: x.name, brand: '', quantity: '', eaten_fraction: 0, amount_eaten: 'still there' });
+      compose.extras.splice(i, 1);
+      refreshExtras();
+    });
+    row.querySelector('[data-ignore-extra]').addEventListener('click', () => {
+      compose.extras.splice(i, 1);
+      refreshExtras();
+    });
+    list.appendChild(row);
+  });
+}
+function refreshExtras() {
+  paintFoodList();
+  if (compose.extras && compose.extras.length) paintExtras();
+  else { const c = $('#extras-card'); if (c) c.remove(); }
 }
 function paintFoodList() {
   const list = $('#food-list');
@@ -755,6 +823,7 @@ function paintFoodList() {
         <button class="del" title="Remove">🗑️</button>
       </div>
       <input class="brand" type="text" value="${escapeHtml(f.brand || '')}" placeholder="Brand / exact product (optional)">
+      <input class="qty" type="text" value="${escapeHtml(f.quantity || '')}" placeholder="Quantity served (e.g. ½ cup, 1 slice)">
       <div class="eaten-row">
         <input type="range" min="0" max="100" step="5" value="${pct}">
         <span class="pct">${pct}% ${eatenBadge(f.eaten_fraction ?? 0)}</span>
@@ -765,6 +834,8 @@ function paintFoodList() {
     const pctEl = row.querySelector('.pct');
     nameI.addEventListener('input', () => compose.foods[i].name = nameI.value);
     brandI.addEventListener('input', () => compose.foods[i].brand = brandI.value);
+    const qtyI = row.querySelector('.qty');
+    qtyI.addEventListener('input', () => compose.foods[i].quantity = qtyI.value);
     range.addEventListener('input', () => {
       const v = +range.value;
       compose.foods[i].eaten_fraction = v / 100;
@@ -787,8 +858,9 @@ function fractionPhrase(f) {
 
 /* ---------- LOG: save ---------- */
 async function saveEntry() {
+  const wasEditing = !!editingId;
   const entry = {
-    id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
+    id: editingId || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
     when: $('#when').value || nowLocalInput(),
     meal: compose.meal,
     foods: compose.foods.filter(f => f.name.trim()),
@@ -806,16 +878,41 @@ async function saveEntry() {
     await dbPut(entry);
     bestEffortPush();
     resetCompose();
-    toast('Saved 🎉');
+    toast(wasEditing ? 'Updated ✅' : 'Saved 🎉');
     showTab('history');
   } catch (err) { toast('Could not save: ' + err.message); }
 }
 function resetCompose() {
-  compose = { before: [], after: [], meal: compose.meal, foods: null, nutrition: null, overall: '', analyzedModel: null };
+  editingId = null;
+  compose = { before: [], after: [], meal: compose.meal, foods: null, nutrition: null, overall: '', analyzedModel: null, extras: null };
   renderPhotoRow('before'); renderPhotoRow('after');
   $('#results').innerHTML = '';
+  const mb = $('#manual-btn'); if (mb) mb.classList.remove('hidden');
   $('#when').value = nowLocalInput();
   updateAnalyzeBtn();
+}
+// Load a saved meal back into the editor for editing (same id, saved as an update)
+async function loadEntryForEdit(id) {
+  const e = (await dbAll()).find(x => String(x.id) === String(id));
+  if (!e) return;
+  editingId = e.id;
+  compose = {
+    before: (e.beforeImgs || []).map(u => ({ dataUrl: u, base64: (u.split(',')[1] || '') })),
+    after: (e.afterImgs || []).map(u => ({ dataUrl: u, base64: (u.split(',')[1] || '') })),
+    meal: e.meal || 'Lunch',
+    foods: (e.foods || []).map(f => ({ ...f })),
+    nutrition: e.nutrition || null,
+    overall: e.overall || '',
+    analyzedModel: e.model || null,
+    extras: null
+  };
+  renderPhotoRow('before'); renderPhotoRow('after');
+  $$('#meal-chips .chip').forEach(c => c.classList.toggle('on', c.dataset.meal === compose.meal));
+  $('#when').value = e.when || nowLocalInput();
+  updateAnalyzeBtn();
+  renderResults();
+  showTab('log');
+  window.scrollTo(0, 0);
 }
 
 /* ---------- HISTORY ---------- */
@@ -898,6 +995,7 @@ async function openDetail(id) {
     <div class="food">
       <div class="top"><span class="name">${escapeHtml(f.name)}</span>${eatenBadge(f.eaten_fraction ?? 0)}</div>
       ${f.brand ? `<div class="amt" style="margin-top:2px">🏷️ ${escapeHtml(f.brand)}</div>` : ''}
+      ${f.quantity ? `<div class="amt" style="margin-top:2px">🍽️ ${escapeHtml(f.quantity)} served</div>` : ''}
       <div class="amt">${escapeHtml(f.amount_eaten || '')} · ${Math.round((f.eaten_fraction ?? 0)*100)}%</div>
     </div>`).join('') || '<p class="note">No items recorded.</p>';
   bg.innerHTML = `
@@ -915,6 +1013,8 @@ async function openDetail(id) {
       <div class="fld" style="margin-bottom:8px">🍴 Foods</div>
       ${foodsHtml}
       <div style="height:10px"></div>
+      <button class="btn" id="detail-edit">✏️ Edit this meal</button>
+      <div style="height:6px"></div>
       <button class="btn ghost" id="detail-delete">🗑️ Delete this meal</button>
       <div style="height:6px"></div>
       <button class="btn secondary" id="detail-close">Close</button>
@@ -923,6 +1023,7 @@ async function openDetail(id) {
   const close = () => bg.remove();
   bg.addEventListener('click', e => { if (e.target === bg) close(); });
   $('#detail-close', bg).addEventListener('click', close);
+  $('#detail-edit', bg).addEventListener('click', () => { close(); loadEntryForEdit(id); });
   $('#detail-delete', bg).addEventListener('click', async () => {
     if (confirm('Delete this meal?')) { await softDeleteEntry(id); close(); renderHistory(); toast('Deleted'); }
   });
