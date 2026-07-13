@@ -271,6 +271,9 @@
       <div style="height:14px"></div>
       <label class="fld" for="when">When</label>
       <input type="datetime-local" id="when">
+      <div style="height:14px"></div>
+      <label class="fld" for="plate-select">Dish <span style="text-transform:none;font-weight:500;letter-spacing:0">(helps the AI size portions)</span></label>
+      <select id="plate-select"></select>
     </div>
 
     <button class="btn" id="analyze-btn" disabled>✨ Analyze with AI</button>
@@ -324,6 +327,21 @@
         <option value="claude-haiku-4-5">Claude Haiku 4.5 — cheapest</option>
       </select>
       <p class="note" style="margin-bottom:0">Opus is the most reliable at reading plates. Switch to Sonnet or Haiku to cut cost if you log many meals a day.</p>
+    </div>
+
+    <div class="card">
+      <h2>🍽️ My Plates &amp; Bowls</h2>
+      <p class="note" style="margin-top:0">Add the dishes you usually use. The AI uses each dish's real size as a reference to estimate portions more accurately. Type the brand &amp; product, tap <b>Find size</b>, and it's saved.</p>
+      <div id="plates-list"></div>
+      <input type="text" id="plate-name" placeholder="Brand &amp; item (e.g. EZPZ Mini Mat)">
+      <div style="height:8px"></div>
+      <textarea id="plate-size" placeholder="Size / dimensions — tap Find size, or type your own"></textarea>
+      <div style="height:8px"></div>
+      <div class="row">
+        <button class="btn small secondary" id="plate-find">🔍 Find size</button>
+        <button class="btn small" id="plate-save">＋ Add dish</button>
+      </div>
+      <div id="plate-msg" class="note" style="margin-top:8px"></div>
     </div>
 
     <div class="card">
@@ -467,8 +485,85 @@ function processImage(file, maxEdge = 1024, quality = 0.82) {
 function blobToUrl(blob) { return URL.createObjectURL(blob); }
 
 /* ---------- transient "compose" state ---------- */
-let compose = { before: [], after: [], meal: 'Lunch', foods: null, nutrition: null, overall: '', analyzedModel: null, extras: null };
+let compose = { before: [], after: [], meal: 'Lunch', foods: null, nutrition: null, overall: '', analyzedModel: null, extras: null, plate: null };
 let editingId = null;   // set when editing a saved meal (vs. creating a new one)
+
+/* ---------- My Plates (size reference for better portion estimates) ---------- */
+function getPlates() { try { return JSON.parse(localStorage.getItem('lp_plates') || '[]'); } catch (e) { return []; } }
+function setPlates(a) { localStorage.setItem('lp_plates', JSON.stringify(a)); }
+const PLATE_SCHEMA = { type: 'object', properties: { size_description: { type: 'string' } }, required: ['size_description'], additionalProperties: false };
+// A short sentence the analysis/recalc prompts use as a real-world size reference.
+function plateReferenceText() {
+  const p = compose.plate;
+  if (!p) return '';
+  if (p.away) return 'NOTE: this meal is away from home on an unfamiliar plate/bowl (not the usual one). Estimate portion sizes from visual cues alone — do not assume a known dish size.';
+  if (p.size) return `SIZE REFERENCE — the food is served on/in the family's usual dish: ${p.size}. Use these real dimensions to gauge the served quantities accurately.`;
+  return '';
+}
+function populatePlateSelect() {
+  const sel = $('#plate-select'); if (!sel) return;
+  const plates = getPlates();
+  const last = localStorage.getItem('lp_lastplate') || '';
+  sel.innerHTML =
+    '<option value="">— none —</option>' +
+    plates.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('') +
+    '<option value="__away__">🏠 Away from home / other dish</option>';
+  sel.value = [...sel.options].some(o => o.value === last) ? last : '';
+  applyPlateSelection();
+}
+function applyPlateSelection() {
+  const sel = $('#plate-select'); if (!sel) return;
+  const v = sel.value;
+  localStorage.setItem('lp_lastplate', v);
+  if (v === '__away__') compose.plate = { away: true };
+  else if (v) { const p = getPlates().find(x => x.id === v); compose.plate = p ? { name: p.name, size: p.size } : null; }
+  else compose.plate = null;
+}
+function renderPlates() {
+  const list = $('#plates-list'); if (!list) return;
+  const plates = getPlates();
+  list.innerHTML = plates.length ? plates.map(p => `
+    <div class="food" style="padding:12px">
+      <div class="top"><span class="name">${escapeHtml(p.name)}</span><button class="del" data-plate-del="${p.id}" title="Remove">🗑️</button></div>
+      <div class="amt" style="margin-top:2px">${escapeHtml(p.size || 'No size set')}</div>
+    </div>`).join('') : '<p class="note" style="margin:0 0 10px">No dishes yet — add the plates and bowls you use most.</p>';
+  list.querySelectorAll('[data-plate-del]').forEach(b => b.addEventListener('click', () => {
+    setPlates(getPlates().filter(x => x.id !== b.dataset.plateDel));
+    renderPlates(); populatePlateSelect();
+  }));
+}
+async function findPlateSize() {
+  const name = $('#plate-name').value.trim();
+  const msg = $('#plate-msg');
+  if (!name) { msg.textContent = 'Enter the brand & item first.'; return; }
+  if (!settings.key) { toast('Add your API key first'); showTab('settings'); return; }
+  const btn = $('#plate-find'); const orig = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Finding…';
+  try {
+    const body = { model: settings.model, max_tokens: 400, messages: [{ role: 'user', content:
+`Give the typical real-world size of this baby/toddler dish so it can be used as a size reference for estimating food portions from photos: "${name}".
+Return a concise "size_description" with the overall dimensions and the size/capacity of each compartment, well, or bowl — in both US units (inches, cups/oz) and metric (cm, ml) where possible. If you don't recognize the exact product, give a best estimate for a typical dish of that type and note it's approximate.` }],
+      output_config: { format: { type: 'json_schema', schema: PLATE_SCHEMA } } };
+    const res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': settings.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(body) });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e?.error?.message || ('HTTP ' + res.status)); }
+    const data = await res.json();
+    const parsed = JSON.parse(data.content.find(b => b.type === 'text').text);
+    $('#plate-size').value = parsed.size_description || '';
+    msg.textContent = 'Found a size — review it, then tap “＋ Add dish”.';
+  } catch (err) { msg.textContent = '✗ ' + (err.message || err); }
+  finally { btn.disabled = false; btn.innerHTML = orig; }
+}
+function savePlate() {
+  const name = $('#plate-name').value.trim();
+  const size = $('#plate-size').value.trim();
+  const msg = $('#plate-msg');
+  if (!name) { msg.textContent = 'Enter the brand & item first.'; return; }
+  const plates = getPlates();
+  plates.push({ id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())), name, size });
+  setPlates(plates);
+  $('#plate-name').value = ''; $('#plate-size').value = ''; msg.textContent = 'Saved ✓';
+  renderPlates(); populatePlateSelect();
+}
 
 // Brand history: which brands you've previously assigned to each food (by name), most-used first.
 let brandHistory = {};
@@ -541,7 +636,7 @@ function showTab(name) {
   if (name === 'history') renderHistory();
   if (name === 'trends') renderTrends();
   if (name === 'foods') renderFoods();
-  if (name === 'settings') { refreshSettings(); renderAccount(); }
+  if (name === 'settings') { refreshSettings(); renderAccount(); renderPlates(); }
   window.scrollTo(0, 0);
 }
 $$('nav.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
@@ -678,6 +773,8 @@ function buildAnalyzeContent() {
   compose.before.forEach(p => content.push(img(p)));
   content.push({ type: 'text', text: `AFTER photos — leftovers on the plate and any spilled/thrown food (${compose.after.length}):` });
   compose.after.forEach(p => content.push(img(p)));
+  const pr = plateReferenceText();
+  if (pr) content.push({ type: 'text', text: pr });
   content.push({ type: 'text', text: INSTRUCTIONS });
   return content;
 }
@@ -757,6 +854,8 @@ async function recalcNutrition() {
     const content = [];
     compose.before.forEach(p => content.push({ type: 'text', text: 'BEFORE / served photo:' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: p.base64 } }));
     compose.after.forEach(p => content.push({ type: 'text', text: 'AFTER photo (leftovers & spills):' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: p.base64 } }));
+    const pr = plateReferenceText();
+    if (pr) content.push({ type: 'text', text: pr });
     content.push({ type: 'text', text:
 `These are the EXACT foods for this toddler meal — the parent has confirmed each identity (brand/product and served quantity where given):
 ${lines}
@@ -979,6 +1078,7 @@ async function saveEntry() {
     nutrition: compose.nutrition || null,
     overall: compose.overall,
     model: compose.analyzedModel,
+    plate: compose.plate ? (compose.plate.away ? 'Away from home' : (compose.plate.name || null)) : null,
     // Stored as data-URL strings (not Blobs) — reliable in IndexedDB on iOS Safari.
     beforeImgs: compose.before.map(p => p.dataUrl),
     afterImgs: compose.after.map(p => p.dataUrl),
@@ -997,11 +1097,12 @@ async function saveEntry() {
 }
 function resetCompose() {
   editingId = null;
-  compose = { before: [], after: [], meal: compose.meal, foods: null, nutrition: null, overall: '', analyzedModel: null, extras: null };
+  compose = { before: [], after: [], meal: compose.meal, foods: null, nutrition: null, overall: '', analyzedModel: null, extras: null, plate: null };
   renderPhotoRow('before'); renderPhotoRow('after');
   $('#results').innerHTML = '';
   const mb = $('#manual-btn'); if (mb) mb.classList.remove('hidden');
   $('#when').value = nowLocalInput();
+  applyPlateSelection();   // keep the currently-picked dish
   updateAnalyzeBtn();
 }
 // Load a saved meal back into the editor for editing (same id, saved as an update)
@@ -1017,8 +1118,10 @@ async function loadEntryForEdit(id) {
     nutrition: e.nutrition || null,
     overall: e.overall || '',
     analyzedModel: e.model || null,
-    extras: null
+    extras: null,
+    plate: null
   };
+  applyPlateSelection();   // reflect the current dish picker
   renderPhotoRow('before'); renderPhotoRow('after');
   $$('#meal-chips .chip').forEach(c => c.classList.toggle('on', c.dataset.meal === compose.meal));
   $('#when').value = e.when || nowLocalInput();
@@ -1123,7 +1226,7 @@ async function openDetail(id) {
   bg.innerHTML = `
     <div class="sheet">
       <h2 style="margin:2px 0 4px">${mealEmoji(entry.meal)} ${escapeHtml(entry.meal || 'Meal')}</h2>
-      <div class="note" style="margin-bottom:14px">${prettyDay(dayKey(entry.when))} · ${prettyTime(entry.when)}</div>
+      <div class="note" style="margin-bottom:14px">${prettyDay(dayKey(entry.when))} · ${prettyTime(entry.when)}${entry.plate ? ' · 🍽️ ' + escapeHtml(entry.plate) : ''}</div>
       <div class="fld" style="margin-bottom:6px">📸 Before · served (${beforeUrls.length})</div>
       ${photoRow(beforeUrls)}
       <div class="fld" style="margin:12px 0 6px">🍽️ After · leftovers &amp; spills (${afterUrls.length})</div>
@@ -1513,6 +1616,10 @@ function escapeHtml(s) { return (s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;'
 /* ---------- init ---------- */
 $('#when').value = nowLocalInput();
 $$('#meal-chips .chip').forEach(c => c.classList.toggle('on', c.dataset.meal === compose.meal));
+populatePlateSelect();
+$('#plate-select').addEventListener('change', applyPlateSelection);
+$('#plate-find').addEventListener('click', findPlateSize);
+$('#plate-save').addEventListener('click', savePlate);
 renderPhotoRow('before'); renderPhotoRow('after');
 updateAnalyzeBtn();
 
