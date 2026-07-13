@@ -130,6 +130,8 @@
   .food .name input { font-weight: 700; }
   .food .brand { font-size: 13px; padding: 9px 11px; margin: 8px 0 6px; }
   .food .qty { font-size: 13px; padding: 9px 11px; margin: 0 0 2px; }
+  .brand-sug { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 2px; font-size: 12px; color: var(--ink-soft); }
+  .sug-chip { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 14px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent-ink); cursor: pointer; }
   .food .del { background: none; border: none; color: var(--red); font-size: 18px; padding: 2px 6px; }
   .eaten-row { display: flex; align-items: center; gap: 10px; }
   .eaten-row input[type=range] { flex: 1; accent-color: var(--accent); }
@@ -290,6 +292,11 @@
     <div id="trends-body"></div>
   </section>
 
+  <!-- ============ FOODS TAB ============ -->
+  <section id="tab-foods" class="hidden">
+    <div id="foods-body"></div>
+  </section>
+
   <!-- ============ SETTINGS TAB ============ -->
   <section id="tab-settings" class="hidden">
     <div class="card">
@@ -337,6 +344,7 @@
   <button data-tab="log" class="on"><span class="ic">📷</span>Log</button>
   <button data-tab="history"><span class="ic">📅</span>History</button>
   <button data-tab="trends"><span class="ic">📈</span>Trends</button>
+  <button data-tab="foods"><span class="ic">🥕</span>Foods</button>
   <button data-tab="settings"><span class="ic">⚙️</span>Settings</button>
 </nav>
 
@@ -462,6 +470,34 @@ function blobToUrl(blob) { return URL.createObjectURL(blob); }
 let compose = { before: [], after: [], meal: 'Lunch', foods: null, nutrition: null, overall: '', analyzedModel: null, extras: null };
 let editingId = null;   // set when editing a saved meal (vs. creating a new one)
 
+// Brand history: which brands you've previously assigned to each food (by name), most-used first.
+let brandHistory = {};
+async function loadBrandHistory() {
+  try {
+    const counts = {};
+    for (const e of await dbAll()) {
+      if (e.deleted) continue;
+      for (const f of (e.foods || [])) {
+        const name = (f.name || '').trim().toLowerCase();
+        const brand = (f.brand || '').trim();
+        if (!name || !brand) continue;
+        (counts[name] = counts[name] || {});
+        counts[name][brand] = (counts[name][brand] || 0) + 1;
+      }
+    }
+    const out = {};
+    for (const name in counts) out[name] = Object.entries(counts[name]).sort((a, b) => b[1] - a[1]).map(([brand]) => brand);
+    brandHistory = out;
+  } catch (e) { /* keep previous */ }
+}
+function brandSuggestionsHtml(name, currentBrand) {
+  if ((currentBrand || '').trim()) return '';                 // already has a brand
+  const sugg = brandHistory[(name || '').trim().toLowerCase()];
+  if (!sugg || !sugg.length) return '';
+  return `<div class="brand-sug"><span>Used before:</span>${sugg.slice(0, 3).map(b =>
+    `<button type="button" class="sug-chip" data-brand="${escapeHtml(b)}">${escapeHtml(b)}</button>`).join('')}</div>`;
+}
+
 /* macro metadata (shared by editor, detail, daily totals) */
 const MACROS = [
   { k: 'calories',  label: 'Calories', unit: 'kcal', cls: 'kcal' },
@@ -504,6 +540,7 @@ function showTab(name) {
   $$('nav.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
   if (name === 'history') renderHistory();
   if (name === 'trends') renderTrends();
+  if (name === 'foods') renderFoods();
   if (name === 'settings') { refreshSettings(); renderAccount(); }
   window.scrollTo(0, 0);
 }
@@ -680,6 +717,7 @@ async function analyze() {
     compose.extras = parsed.extra_after_foods || [];
     compose.analyzedModel = settings.model;
     syncNutritionFromFoods();   // eaten total = Σ per-food nutrition × eaten fraction
+    await loadBrandHistory();   // so brand suggestions reflect the latest history
     renderResults();
     toast('Done! Review & save 👇');
   } catch (err) {
@@ -867,6 +905,7 @@ function paintFoodList() {
         <button class="del" title="Remove">🗑️</button>
       </div>
       <input class="brand" type="text" value="${escapeHtml(f.brand || '')}" placeholder="Brand / exact product (optional)">
+      <div class="sug-wrap"></div>
       <input class="qty" type="text" value="${escapeHtml(f.quantity || '')}" placeholder="Quantity served (e.g. ½ cup, 1 slice)">
       <div class="eaten-row">
         <input type="range" min="0" max="100" step="5" value="${pct}">
@@ -876,8 +915,16 @@ function paintFoodList() {
     const brandI = row.querySelector('.brand');
     const range = row.querySelector('input[type=range]');
     const pctEl = row.querySelector('.pct');
-    nameI.addEventListener('input', () => compose.foods[i].name = nameI.value);
-    brandI.addEventListener('input', () => compose.foods[i].brand = brandI.value);
+    const sugWrap = row.querySelector('.sug-wrap');
+    const renderSug = () => {
+      sugWrap.innerHTML = brandSuggestionsHtml(compose.foods[i].name, compose.foods[i].brand);
+      sugWrap.querySelectorAll('.sug-chip').forEach(ch => ch.addEventListener('click', () => {
+        compose.foods[i].brand = ch.dataset.brand; brandI.value = ch.dataset.brand; renderSug();
+      }));
+    };
+    renderSug();
+    nameI.addEventListener('input', () => { compose.foods[i].name = nameI.value; renderSug(); });
+    brandI.addEventListener('input', () => { compose.foods[i].brand = brandI.value; renderSug(); });
     const qtyI = row.querySelector('.qty');
     qtyI.addEventListener('input', () => compose.foods[i].quantity = qtyI.value);
     range.addEventListener('input', () => {
@@ -942,6 +989,7 @@ async function saveEntry() {
   try {
     await dbPut(entry);
     bestEffortPush();
+    loadBrandHistory();   // keep brand suggestions current
     resetCompose();
     toast(wasEditing ? 'Updated ✅' : 'Saved 🎉');
     showTab('history');
@@ -1171,22 +1219,6 @@ async function renderTrends() {
   const avgObj = { protein_g: avg('protein_g'), carbs_g: avg('carbs_g'), fat_g: avg('fat_g') };
   const maxCal = Math.max(1, ...totals.map(t => t.cal));
 
-  // Food preferences within range
-  const rangeStart = days[0];
-  const fmap = {};
-  for (const e of entries) {
-    const d = new Date(e.when); if (isNaN(d) || d < rangeStart) continue;
-    for (const f of (e.foods || [])) {
-      const name = (f.name || '').trim(); if (!name) continue;
-      const key = name.toLowerCase();
-      (fmap[key] = fmap[key] || { name, sum: 0, n: 0 });
-      fmap[key].sum += (+f.eaten_fraction || 0); fmap[key].n++;
-    }
-  }
-  const foods = Object.values(fmap).map(f => ({ name: f.name, n: f.n, avg: f.sum / f.n }));
-  const loves = foods.filter(f => f.avg >= 0.65).sort((a, b) => b.avg - a.avg || b.n - a.n).slice(0, 6);
-  const skips = foods.filter(f => f.avg <= 0.40).sort((a, b) => a.avg - b.avg || b.n - a.n).slice(0, 6);
-
   const chart = `<div class="chart">${totals.map(t => {
     const h = t.cal ? Math.max(3, Math.round(t.cal / maxCal * 100)) : 2;
     const lab = trendRange <= 7 ? ['S', 'M', 'T', 'W', 'T', 'F', 'S'][new Date(t.key + 'T00:00').getDay()] : '';
@@ -1219,18 +1251,46 @@ async function renderTrends() {
       ${pcfTiles(avgObj)}
     </div>
 
-    <div class="card">
-      <h2>😋 Foods she loves</h2>
-      ${loves.length ? loves.map(foodStatRow).join('') : '<p class="note" style="margin:0">Not enough data yet.</p>'}
-    </div>
-
-    <div class="card">
-      <h2>😐 Often leaves these</h2>
-      ${skips.length ? skips.map(foodStatRow).join('') : '<p class="note" style="margin:0">Nothing she consistently skips — nice!</p>'}
-    </div>
     <div style="height:16px"></div>`;
 
-  $$('.range-toggle .chip').forEach(c => c.addEventListener('click', () => { trendRange = +c.dataset.range; renderTrends(); }));
+  $$('#trends-body .range-toggle .chip').forEach(c => c.addEventListener('click', () => { trendRange = +c.dataset.range; renderTrends(); }));
+}
+
+/* ---------- FOODS TAB (every food she's eaten, ranked) ---------- */
+let foodsSort = 'liked';
+async function renderFoods() {
+  const el = $('#foods-body');
+  const entries = await dbActive();
+  const map = {};
+  for (const e of entries) for (const f of (e.foods || [])) {
+    const name = (f.name || '').trim(); if (!name) continue;
+    const key = name.toLowerCase();
+    (map[key] = map[key] || { name, n: 0, sum: 0 });
+    map[key].n++; map[key].sum += (+f.eaten_fraction || 0);
+  }
+  const foods = Object.values(map).map(f => ({ name: f.name, n: f.n, avg: f.sum / f.n }));
+  if (!foods.length) {
+    el.innerHTML = `<div class="empty"><div class="big">🥕</div><div>No foods yet.<br>Log some meals and every food she tries will show up here!</div></div>`;
+    return;
+  }
+  const sorters = {
+    liked: (a, b) => b.avg - a.avg || b.n - a.n,
+    often: (a, b) => b.n - a.n || b.avg - a.avg,
+    az:    (a, b) => a.name.localeCompare(b.name)
+  };
+  foods.sort(sorters[foodsSort] || sorters.liked);
+  el.innerHTML = `
+    <div class="range-toggle">
+      ${[['liked', '😋 Most liked'], ['often', '🔁 Most often'], ['az', 'A–Z']].map(([k, l]) =>
+        `<div class="chip ${k === foodsSort ? 'on' : ''}" data-fsort="${k}">${l}</div>`).join('')}
+    </div>
+    <div class="card">
+      <h2>All foods <span class="est">${foods.length}</span></h2>
+      ${foods.map(foodStatRow).join('')}
+    </div>
+    <p class="note" style="text-align:center">The bar shows the average % she eats when it's served — a rough gauge of how much she likes it.</p>
+    <div style="height:16px"></div>`;
+  $$('#foods-body .range-toggle .chip').forEach(c => c.addEventListener('click', () => { foodsSort = c.dataset.fsort; renderFoods(); }));
 }
 
 /* ---------- CLOUD SYNC (Supabase) ---------- */
@@ -1457,7 +1517,7 @@ renderPhotoRow('before'); renderPhotoRow('after');
 updateAnalyzeBtn();
 
 // cloud sync: normalize ids, then restore session + background sync
-(async () => { try { await migrateIdsToString(); await initAuth(); } catch (e) { console.warn('sync init', e); } })();
+(async () => { try { await migrateIdsToString(); await initAuth(); await loadBrandHistory(); } catch (e) { console.warn('sync init', e); } })();
 
 // register service worker (only works over https/localhost; harmless otherwise)
 if ('serviceWorker' in navigator) {
