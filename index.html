@@ -487,6 +487,8 @@ function blobToUrl(blob) { return URL.createObjectURL(blob); }
 /* ---------- transient "compose" state ---------- */
 let compose = { before: [], after: [], meal: 'Lunch', foods: null, nutrition: null, overall: '', analyzedModel: null, extras: null, plate: null };
 let editingId = null;   // set when editing a saved meal (vs. creating a new one)
+let overallEdited = false;   // user hand-wrote the note → never auto-regenerate it
+let overallDirty = false;    // foods changed since the last summary → regenerate on save
 
 /* ---------- My Plates (size reference for better portion estimates) ---------- */
 function getPlates() { try { return JSON.parse(localStorage.getItem('lp_plates') || '[]'); } catch (e) { return []; } }
@@ -743,11 +745,13 @@ const RECALC_SCHEMA = {
         required: ['name', 'eaten_fraction', 'amount_eaten', 'nutrition'],
         additionalProperties: false
       }
-    }
+    },
+    overall: { type: 'string' }
   },
-  required: ['foods'],
+  required: ['foods', 'overall'],
   additionalProperties: false
 };
+const SUMMARY_SCHEMA = { type: 'object', properties: { overall: { type: 'string' } }, required: ['overall'], additionalProperties: false };
 
 const INSTRUCTIONS =
 `You are helping a parent track what their toddler ate. You are given two SETS of photos of one meal:
@@ -811,6 +815,7 @@ async function analyze() {
     const parsed = JSON.parse(textBlock.text);
     compose.foods = parsed.foods || [];
     compose.overall = parsed.overall || '';
+    overallEdited = false; overallDirty = false;   // fresh AI summary matches the meal
     compose.extras = parsed.extra_after_foods || [];
     compose.analyzedModel = settings.model;
     syncNutritionFromFoods();   // eaten total = Σ per-food nutrition × eaten fraction
@@ -831,6 +836,7 @@ $('#manual-btn').addEventListener('click', () => {
   if (!compose.foods) compose.foods = [];
   if (!compose.nutrition) compose.nutrition = { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0, sugar_g: 0, fiber_g: 0 };
   if (!compose.foods.length) compose.foods.push({ name: '', brand: '', quantity: '', eaten_fraction: 1, amount_eaten: 'ate it all' });
+  overallDirty = true;   // manual meal → generate a summary on save
   renderResults();
   const first = document.querySelector('#food-list .name');
   if (first) first.scrollIntoView({ block: 'center' });
@@ -865,7 +871,9 @@ For EACH food, using the AFTER photos and the served quantity, estimate:
 - amount_eaten: a short phrase (e.g. "ate about half", "ate it all", "barely touched").
 - nutrition: the nutrition facts for the FULL SERVED quantity of this food (the whole amount served, as if all of it were eaten): calories (kcal), protein_g, carbs_g, fat_g, sugar_g, fiber_g. Use real published facts for named brands/products. Toddler-sized.
 
-Return "foods" with one entry per food listed above (use the same name), each with eaten_fraction, amount_eaten, and nutrition (for the full served quantity).` });
+Also return "overall": one short, warm sentence (max ~20 words) summarizing the meal for the parent, based on the final foods and how much was eaten. If a lot was left or thrown/spilled, mention it gently.
+
+Return "foods" with one entry per food listed above (use the same name), each with eaten_fraction, amount_eaten, and nutrition (for the full served quantity), plus "overall".` });
     const body = { model: settings.model, max_tokens: 1500, messages: [{ role: 'user', content }], output_config: { format: { type: 'json_schema', schema: RECALC_SCHEMA } } };
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -888,6 +896,11 @@ Return "foods" with one entry per food listed above (use the same name), each wi
       if (typeof r.eaten_fraction === 'number') compose.foods[o.idx].eaten_fraction = Math.max(0, Math.min(1, r.eaten_fraction));
       if (r.amount_eaten) compose.foods[o.idx].amount_eaten = r.amount_eaten;
       if (r.nutrition) compose.foods[o.idx].nutrition = r.nutrition;
+    }
+    if (parsed.overall && !overallEdited) {
+      compose.overall = parsed.overall;
+      const ta = $('#overall-note'); if (ta) ta.value = parsed.overall;
+      overallDirty = false;   // summary now matches the re-estimated meal
     }
     paintFoodList();
     syncNutritionFromFoods();
@@ -945,9 +958,10 @@ function renderResults() {
     <div style="height:20px"></div>`;
   paintFoodList();
   if (hasExtras) paintExtras();
-  $('#overall-note').addEventListener('input', e => compose.overall = e.target.value);
+  $('#overall-note').addEventListener('input', e => { compose.overall = e.target.value; overallEdited = true; overallDirty = false; });
   $('#add-food').addEventListener('click', () => {
     compose.foods.push({ name: '', brand: '', quantity: '', eaten_fraction: 0.5, amount_eaten: 'ate some' });
+    overallDirty = true;
     paintFoodList();
     const rows = document.querySelectorAll('#food-list .food');
     const last = rows[rows.length - 1];
@@ -977,6 +991,7 @@ function paintExtras() {
     row.querySelector('[data-add-extra]').addEventListener('click', () => {
       compose.foods.push({ name: x.name, brand: '', quantity: '', eaten_fraction: 0, amount_eaten: 'still there' });
       compose.extras.splice(i, 1);
+      overallDirty = true;
       refreshExtras();
     });
     row.querySelector('[data-ignore-extra]').addEventListener('click', () => {
@@ -1022,7 +1037,7 @@ function paintFoodList() {
       }));
     };
     renderSug();
-    nameI.addEventListener('input', () => { compose.foods[i].name = nameI.value; renderSug(); });
+    nameI.addEventListener('input', () => { compose.foods[i].name = nameI.value; overallDirty = true; renderSug(); });
     brandI.addEventListener('input', () => { compose.foods[i].brand = brandI.value; renderSug(); });
     const qtyI = row.querySelector('.qty');
     qtyI.addEventListener('input', () => compose.foods[i].quantity = qtyI.value);
@@ -1031,10 +1046,11 @@ function paintFoodList() {
       compose.foods[i].eaten_fraction = v / 100;
       compose.foods[i].amount_eaten = fractionPhrase(v / 100);
       pctEl.innerHTML = v + '% ' + eatenBadge(v / 100);
+      overallDirty = true;
       syncNutritionFromFoods();   // nutrition follows the sliders, live
     });
     row.querySelector('.del').addEventListener('click', () => {
-      compose.foods.splice(i, 1); paintFoodList(); syncNutritionFromFoods();
+      compose.foods.splice(i, 1); overallDirty = true; paintFoodList(); syncNutritionFromFoods();
     });
     list.appendChild(row);
   });
@@ -1068,6 +1084,34 @@ function syncNutritionFromFoods() {
 }
 
 /* ---------- LOG: save ---------- */
+// Rewrite a saved meal's summary from its final foods (best-effort, after save). Text-only, cheap.
+async function regenerateSummaryFor(entryId, meal) {
+  if (!settings.key || !navigator.onLine) return;
+  try {
+    const e = await dbGet(String(entryId));
+    if (!e || e.deleted || !(e.foods || []).length) return;
+    const lines = e.foods.map(f => {
+      const label = [f.brand, f.name].filter(s => (s || '').trim()).join(' ');
+      const qty = (f.quantity || '').trim();
+      const eaten = f.amount_eaten || ('ate ' + Math.round((f.eaten_fraction ?? 0) * 100) + '%');
+      return `- ${label}${qty ? ' (' + qty + ' served)' : ''}: ${eaten}`;
+    }).join('\n');
+    const body = { model: settings.model, max_tokens: 200, messages: [{ role: 'user', content:
+`Write "overall": one short, warm sentence (max ~20 words) summarizing this toddler's ${meal || 'meal'} for a parent, based on what she actually ate. If a lot was left or thrown/spilled, mention it gently.
+Foods:
+${lines}` }], output_config: { format: { type: 'json_schema', schema: SUMMARY_SCHEMA } } };
+    const res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': settings.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(body) });
+    if (!res.ok) return;
+    const data = await res.json();
+    const parsed = JSON.parse(data.content.find(b => b.type === 'text').text);
+    if (!parsed.overall) return;
+    const fresh = await dbGet(String(entryId));
+    if (!fresh || fresh.deleted) return;
+    fresh.overall = parsed.overall; fresh.updatedAt = new Date().toISOString(); fresh.dirty = true;
+    await dbPut(fresh); bestEffortPush();
+    if (!$('#tab-history').classList.contains('hidden')) renderHistory();
+  } catch (e) { /* summary is best-effort — ignore failures */ }
+}
 async function saveEntry() {
   const wasEditing = !!editingId;
   const entry = {
@@ -1087,16 +1131,19 @@ async function saveEntry() {
     dirty: true
   };
   try {
+    const regen = overallDirty && !overallEdited && (entry.foods || []).length > 0;
     await dbPut(entry);
     bestEffortPush();
     loadBrandHistory();   // keep brand suggestions current
     resetCompose();
     toast(wasEditing ? 'Updated ✅' : 'Saved 🎉');
     showTab('history');
+    if (regen) regenerateSummaryFor(entry.id, entry.meal);   // refresh summary to match final meal
   } catch (err) { toast('Could not save: ' + err.message); }
 }
 function resetCompose() {
   editingId = null;
+  overallEdited = false; overallDirty = false;
   compose = { before: [], after: [], meal: compose.meal, foods: null, nutrition: null, overall: '', analyzedModel: null, extras: null, plate: null };
   renderPhotoRow('before'); renderPhotoRow('after');
   $('#results').innerHTML = '';
@@ -1110,6 +1157,7 @@ async function loadEntryForEdit(id) {
   const e = (await dbAll()).find(x => String(x.id) === String(id));
   if (!e) return;
   editingId = e.id;
+  overallEdited = false; overallDirty = false;   // clean start; changing foods will mark it stale
   compose = {
     before: (e.beforeImgs || []).map(u => ({ dataUrl: u, base64: (u.split(',')[1] || '') })),
     after: (e.afterImgs || []).map(u => ({ dataUrl: u, base64: (u.split(',')[1] || '') })),
